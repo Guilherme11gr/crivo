@@ -1,0 +1,19 @@
+# Node (legacy prototype)
+node_modules/
+dist/
+coverage/
+.qualitygate-temp/
+*.tsbuildinfo
+
+# Go
+qg.exe
+qg
+*.exe
+/bin/
+
+# Store
+.qualitygate/
+
+# IDE
+.idea/
+.vscode/

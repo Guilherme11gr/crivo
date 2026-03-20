@@ -1,0 +1,41 @@
+{
+  "checks": {
+    "typescript": true,
+    "lint": true,
+    "coverage": true,
+    "duplication": true
+  },
+  "coverage": {
+    "lines": 60,
+    "branches": 50,
+    "functions": 60,
+    "statements": 60
+  },
+  "duplication": {
+    "threshold": 5,
+    "minLines": 5,
+    "minTokens": 50
+  },
+  "complexity": {
+    "cognitive": 15,
+    "cyclomatic": 10
+  },
+  "structural": {
+    "maxLinesPerFunction": 100,
+    "maxParams": 4,
+    "maxDepth": 4,
+    "maxNestedCallbacks": 3
+  },
+  "exclude": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/.next/**"
+  ],
+  "testExclude": [
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/__tests__/**"
+  ],
+  "srcPattern": "src"
+}

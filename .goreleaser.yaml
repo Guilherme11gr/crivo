@@ -1,0 +1,63 @@
+version: 2
+
+project_name: quality-gate
+
+builds:
+  - id: qg
+    main: ./cmd/qg/
+    binary: qg
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    flags:
+      - -trimpath
+
+archives:
+  - id: default
+    format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+brews:
+  - name: quality-gate
+    repository:
+      owner: anthropics
+      name: homebrew-tap
+    description: "Lightweight quality gate for code analysis — open source SonarQube alternative"
+    homepage: "https://github.com/anthropics/quality-gate"
+    license: "MIT"
+    install: |
+      bin.install "qg"
+    test: |
+      system "#{bin}/qg", "version"
+
+nfpms:
+  - id: default
+    package_name: quality-gate
+    description: "Lightweight quality gate for code analysis"
+    maintainer: "Quality Gate Team"
+    license: MIT
+    formats:
+      - deb
+      - rpm
