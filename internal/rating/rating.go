@@ -135,20 +135,115 @@ func parseEffort(effort string) int {
 func EvaluateQualityGate(result *domain.AnalysisResult) {
 	allIssues := result.AllIssues()
 
+	// Get LOC from complexity metrics if available
+	totalLines := 1000
+	for _, check := range result.Checks {
+		if check.ID == "complexity" && check.Metrics != nil {
+			if loc, ok := check.Metrics["total_lines"]; ok && loc > 0 {
+				totalLines = int(loc)
+			}
+		}
+	}
+
 	// Calculate ratings
 	result.Ratings = map[string]domain.Rating{
 		"Reliability":     CalculateReliability(allIssues),
 		"Security":        CalculateSecurity(allIssues),
-		"Maintainability": CalculateMaintainability(allIssues, 1000), // TODO: count actual LOC
+		"Maintainability": CalculateMaintainability(allIssues, totalLines),
 	}
 
 	// Count totals
 	result.TotalIssues = len(allIssues)
 
-	// Evaluate conditions based on check statuses
-	hasFailure := false
+	// Build conditions from check results
+	var conditions []domain.QualityGateCondition
+
 	for _, check := range result.Checks {
-		if check.Status == domain.StatusFailed {
+		if check.Status == domain.StatusSkipped {
+			continue
+		}
+
+		switch check.ID {
+		case "typescript":
+			errors := 0.0
+			if check.Metrics != nil {
+				errors = check.Metrics["errors"]
+			}
+			conditions = append(conditions, domain.QualityGateCondition{
+				Metric:    "type_errors",
+				Operator:  "lt",
+				Threshold: 1,
+				Actual:    errors,
+				Passed:    errors == 0,
+			})
+
+		case "coverage":
+			if check.Metrics != nil {
+				if lines, ok := check.Metrics["lines"]; ok {
+					conditions = append(conditions, domain.QualityGateCondition{
+						Metric:    "coverage_lines",
+						Operator:  "gt",
+						Threshold: 60,
+						Actual:    lines,
+						Passed:    check.Status != domain.StatusFailed,
+					})
+				}
+			}
+
+		case "duplication":
+			if check.Metrics != nil {
+				if pct, ok := check.Metrics["percentage"]; ok {
+					conditions = append(conditions, domain.QualityGateCondition{
+						Metric:    "duplication_pct",
+						Operator:  "lt",
+						Threshold: 5,
+						Actual:    pct,
+						Passed:    check.Status != domain.StatusFailed,
+					})
+				}
+			}
+
+		case "eslint":
+			errors := 0.0
+			if check.Metrics != nil {
+				errors = check.Metrics["errors"]
+			}
+			conditions = append(conditions, domain.QualityGateCondition{
+				Metric:    "lint_errors",
+				Operator:  "lt",
+				Threshold: 1,
+				Actual:    errors,
+				Passed:    errors == 0,
+			})
+
+		case "secrets":
+			secrets := 0.0
+			if check.Metrics != nil {
+				secrets = check.Metrics["secrets"]
+			}
+			conditions = append(conditions, domain.QualityGateCondition{
+				Metric:    "secrets",
+				Operator:  "lt",
+				Threshold: 1,
+				Actual:    secrets,
+				Passed:    secrets == 0,
+			})
+		}
+	}
+
+	result.Conditions = conditions
+
+	// Gate fails if any condition fails
+	hasFailure := false
+	for _, c := range conditions {
+		if !c.Passed {
+			hasFailure = true
+			break
+		}
+	}
+	// Also fail if any check is in error state
+	for _, check := range result.Checks {
+		if check.Status == domain.StatusFailed || check.Status == domain.StatusError {
 			hasFailure = true
 			break
 		}

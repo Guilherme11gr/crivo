@@ -68,11 +68,15 @@ func DefaultBranch(ctx context.Context, projectDir string) string {
 
 // GetChangedFiles returns files changed between base and head
 func GetChangedFiles(ctx context.Context, projectDir, base, head string) ([]ChangedFile, error) {
+	var args []string
 	if head == "" {
-		head = "HEAD"
+		// Compare base vs working tree
+		args = []string{"diff", "--numstat", "--diff-filter=ACMR", base}
+	} else {
+		args = []string{"diff", "--numstat", "--diff-filter=ACMR", base + "..." + head}
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "diff", "--numstat", "--diff-filter=ACMR", base+"..."+head)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = projectDir
 
 	out, err := cmd.Output()
@@ -109,11 +113,14 @@ var hunkRe = regexp.MustCompile(`^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,(\d+))?\s+@@`)
 
 // GetChangedLines returns the specific line ranges that were added/modified
 func GetChangedLines(ctx context.Context, projectDir, base, head string) ([]ChangedLine, error) {
+	var args []string
 	if head == "" {
-		head = "HEAD"
+		args = []string{"diff", "-U0", "--diff-filter=ACMR", base}
+	} else {
+		args = []string{"diff", "-U0", "--diff-filter=ACMR", base + "..." + head}
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "diff", "-U0", "--diff-filter=ACMR", base+"..."+head)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = projectDir
 
 	var stdout bytes.Buffer

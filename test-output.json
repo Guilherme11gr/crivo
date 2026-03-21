@@ -1,0 +1,111 @@
+{
+  "version": "1.0.0",
+  "status": "failed",
+  "projectDir": "D:\\Users\\Guilherme\\Documents\\development\\agenda-aqui",
+  "timestamp": "2026-03-21T03:13:37.288872-03:00",
+  "duration": "37.2s",
+  "totalIssues": 0,
+  "ratings": {
+    "Maintainability": "A",
+    "Reliability": "A",
+    "Security": "A"
+  },
+  "conditions": [
+    {
+      "metric": "duplication_pct",
+      "operator": "lt",
+      "threshold": 5,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "metric": "type_errors",
+      "operator": "lt",
+      "threshold": 1,
+      "actual": 34,
+      "passed": false
+    },
+    {
+      "metric": "lint_errors",
+      "operator": "lt",
+      "threshold": 1,
+      "actual": 0,
+      "passed": true
+    },
+    {
+      "metric": "coverage_lines",
+      "operator": "gt",
+      "threshold": 60,
+      "actual": 19.05,
+      "passed": false
+    }
+  ],
+  "checks": [
+    {
+      "name": "Complexity",
+      "id": "complexity",
+      "status": "failed",
+      "summary": "avg 1.1 · max 33 · 12 violations",
+      "duration": "1.9s",
+      "metrics": {
+        "avg_complexity": 1.1323313782991202,
+        "max_complexity": 33,
+        "total_functions": 2728,
+        "total_lines": 193057,
+        "violations": 12
+      }
+    },
+    {
+      "name": "Duplication",
+      "id": "duplication",
+      "status": "passed",
+      "summary": "0% duplication",
+      "duration": "5.3s",
+      "metrics": {
+        "clones": 0,
+        "percentage": 0
+      }
+    },
+    {
+      "name": "Type Safety",
+      "id": "typescript",
+      "status": "failed",
+      "summary": "34 errors",
+      "duration": "27.1s",
+      "metrics": {
+        "errors": 34
+      }
+    },
+    {
+      "name": "Code Quality",
+      "id": "eslint",
+      "status": "warning",
+      "summary": "17 warnings",
+      "duration": "30.0s",
+      "metrics": {
+        "errors": 0,
+        "warnings": 17
+      }
+    },
+    {
+      "name": "Coverage",
+      "id": "coverage",
+      "status": "failed",
+      "summary": "19.1% lines · 16.5% branches (min: 60%/50%)",
+      "duration": "37.2s",
+      "metrics": {
+        "branches": 16.48,
+        "functions": 14.4,
+        "lines": 19.05,
+        "statements": 18.61
+      }
+    }
+  ],
+  "summary": {
+    "bugs": 0,
+    "vulnerabilities": 0,
+    "codeSmells": 0,
+    "coveragePercent": 19.05,
+    "duplicationPercent": 0
+  }
+}
