@@ -125,35 +125,59 @@ func PrintConsoleReport(result *domain.AnalysisResult, verbose bool) {
 		fmt.Println()
 	}
 
-	// Details
-	if verbose {
-		for _, check := range result.Checks {
-			if len(check.Details) > 0 {
-				icon := statusIcons[check.Status]
-				sColor := statusColors[check.Status]
-				fmt.Println(color(fmt.Sprintf("  %s %s Details:", icon, check.Name), sColor, bold))
-				for _, d := range check.Details {
-					fmt.Println(color("    "+d, dim))
-				}
-				fmt.Println()
+	// Details and issues
+	for _, check := range result.Checks {
+		showCheck := verbose || check.Status == domain.StatusFailed || check.Status == domain.StatusWarning
+		if !showCheck {
+			continue
+		}
+
+		hasContent := len(check.Details) > 0 || len(check.Issues) > 0
+		if !hasContent {
+			continue
+		}
+
+		icon := statusIcons[check.Status]
+		sColor := statusColors[check.Status]
+		fmt.Println(color(fmt.Sprintf("  %s %s:", icon, check.Name), sColor, bold))
+
+		// Show summary details (thresholds, etc.)
+		if len(check.Details) > 0 {
+			limit := len(check.Details)
+			if !verbose {
+				limit = min(limit, 5)
+			}
+			for _, d := range check.Details[:limit] {
+				fmt.Println(color("    "+d, dim))
+			}
+			if !verbose && len(check.Details) > 5 {
+				fmt.Println(color(fmt.Sprintf("    ... and %d more", len(check.Details)-5), dim))
 			}
 		}
-	} else {
-		for _, check := range result.Checks {
-			if (check.Status == domain.StatusFailed || check.Status == domain.StatusWarning) && len(check.Details) > 0 {
-				icon := statusIcons[check.Status]
-				sColor := statusColors[check.Status]
-				fmt.Println(color(fmt.Sprintf("  %s %s:", icon, check.Name), sColor, bold))
-				limit := min(len(check.Details), 5)
-				for _, d := range check.Details[:limit] {
-					fmt.Println(color("    "+d, dim))
-				}
-				if len(check.Details) > 5 {
-					fmt.Println(color(fmt.Sprintf("    ... and %d more (use --verbose)", len(check.Details)-5), dim))
-				}
-				fmt.Println()
+
+		// Show actionable issues with file:line
+		if len(check.Issues) > 0 {
+			fmt.Println()
+			issueLimit := 10
+			if verbose {
+				issueLimit = 50
+			}
+			limit := min(len(check.Issues), issueLimit)
+			for _, issue := range check.Issues[:limit] {
+				sevIcon := severityIcon(issue.Severity)
+				loc := fmt.Sprintf("%s:%d", issue.File, issue.Line)
+				fmt.Printf("    %s %s %s\n",
+					color(sevIcon, severityColor(issue.Severity)),
+					color(loc, cyan),
+					issue.Message,
+				)
+			}
+			if len(check.Issues) > issueLimit {
+				fmt.Println(color(fmt.Sprintf("    ... and %d more issues (use --verbose)", len(check.Issues)-issueLimit), dim))
 			}
 		}
+
+		fmt.Println()
 	}
 }
 
@@ -203,6 +227,32 @@ func ratingColor(r domain.Rating) string {
 		return red
 	default:
 		return white
+	}
+}
+
+func severityIcon(s domain.Severity) string {
+	switch s {
+	case domain.SeverityBlocker:
+		return "!!!"
+	case domain.SeverityCritical:
+		return " !!"
+	case domain.SeverityMajor:
+		return "  !"
+	case domain.SeverityMinor:
+		return "  ~"
+	default:
+		return "  ·"
+	}
+}
+
+func severityColor(s domain.Severity) string {
+	switch s {
+	case domain.SeverityBlocker, domain.SeverityCritical:
+		return red
+	case domain.SeverityMajor:
+		return yellow
+	default:
+		return dim
 	}
 }
 

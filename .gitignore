@@ -1,7 +1,7 @@
 # Node (legacy prototype)
 node_modules/
 dist/
-coverage/
+/coverage/
 .qualitygate-temp/
 *.tsbuildinfo
 

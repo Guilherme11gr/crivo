@@ -69,6 +69,13 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		summary += "s"
 	}
 
+	// If tsc exited non-zero but we found no parseable errors, treat as passed
+	// (can happen with tsc warnings, project references, etc.)
+	status := domain.StatusFailed
+	if errorCount == 0 {
+		status = domain.StatusPassed
+	}
+
 	details := make([]string, 0, min(len(issues), 20))
 	for i, issue := range issues {
 		if i >= 20 {
@@ -80,7 +87,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 	return &domain.CheckResult{
 		Name:     p.Name(),
 		ID:       p.ID(),
-		Status:   domain.StatusFailed,
+		Status:   status,
 		Summary:  summary,
 		Issues:   issues,
 		Details:  details,
