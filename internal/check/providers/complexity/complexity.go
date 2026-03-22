@@ -45,7 +45,10 @@ func (p *Provider) Detect(_ context.Context, projectDir string) bool {
 
 func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.Config) (*domain.CheckResult, error) {
 	start := time.Now()
-	threshold := 15
+	threshold := cfg.Complexity.Threshold
+	if threshold <= 0 {
+		threshold = 15
+	}
 
 	// Try AST-based analysis first (for JS/TS projects with node + typescript)
 	result, astErr := p.analyzeAST(ctx, projectDir, cfg, threshold)
@@ -137,6 +140,16 @@ func (p *Provider) analyzeAST(ctx context.Context, projectDir string, cfg *confi
 	}
 	if output.Error != "" {
 		return nil, fmt.Errorf("cognitive.js: %s", output.Error)
+	}
+
+	// Fix paths: cognitive.js outputs paths relative to the scanned directory,
+	// but we need them relative to projectDir (i.e., prefixed with srcDir).
+	srcPrefix := filepath.ToSlash(srcDir)
+	if !strings.HasSuffix(srcPrefix, "/") {
+		srcPrefix += "/"
+	}
+	for i := range output.Functions {
+		output.Functions[i].File = srcPrefix + output.Functions[i].File
 	}
 
 	return p.buildResult(output, threshold, "ast"), nil

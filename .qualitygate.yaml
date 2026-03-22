@@ -1,0 +1,34 @@
+profile: strict
+languages:
+  - go
+
+src:
+  - internal/
+  - cmd/
+
+exclude:
+  - node_modules/
+  - dist/
+  - coverage/
+  - src/           # legacy TS prototype — skip until removed
+  - "*.min.js"
+
+checks:
+  typescript: false
+  eslint: false
+  semgrep: false
+  coverage: false
+  duplication: true
+  secrets: true
+  dead-code: false
+
+coverage:
+  lines: 60
+  branches: 50
+  functions: 60
+  statements: 60
+
+duplication:
+  threshold: 5
+  min-lines: 5
+  min-tokens: 50

@@ -185,6 +185,26 @@ func (s *Store) GetTrend(projectDir string, limit int) ([]TrendPoint, error) {
 	return points, nil
 }
 
+// GetLastMetrics returns the metrics from the most recent saved analysis for a project.
+// Used for baseline comparison (e.g., coverage regression detection).
+func (s *Store) GetLastMetrics(projectDir string) (map[string]float64, error) {
+	var metricsStr string
+	err := s.db.QueryRow(`
+		SELECT metrics_json FROM analyses
+		WHERE project_dir = ?
+		ORDER BY created_at DESC
+		LIMIT 1`, projectDir).Scan(&metricsStr)
+	if err != nil {
+		return nil, err
+	}
+
+	var metrics map[string]float64
+	if err := json.Unmarshal([]byte(metricsStr), &metrics); err != nil {
+		return nil, err
+	}
+	return metrics, nil
+}
+
 // MarkIssue updates the lifecycle status of an issue (false positive, won't fix)
 func (s *Store) MarkIssue(fingerprint, status, resolution string) error {
 	_, err := s.db.Exec(`

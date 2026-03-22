@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/anthropics/quality-gate/internal/check"
 	"github.com/anthropics/quality-gate/internal/config"
 	"github.com/anthropics/quality-gate/internal/domain"
 )
@@ -80,15 +81,26 @@ func (p *Provider) Detect(_ context.Context, projectDir string) bool {
 func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.Config) (*domain.CheckResult, error) {
 	start := time.Now()
 
+	npxBin := check.FindNpx()
+	if npxBin == "" {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusSkipped,
+			Summary:  "npx not found",
+			Duration: time.Since(start),
+		}, nil
+	}
+
 	// Run Jest with coverage
-	cmd := exec.CommandContext(ctx, "npx", "jest",
+	cmd := exec.CommandContext(ctx, npxBin, "jest",
 		"--coverage",
 		"--coverageReporters=json-summary",
 		"--passWithNoTests",
 		"--silent",
 	)
 	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(), "CI=true", "NODE_ENV=test")
+	cmd.Env = append(check.NodeEnv(), "CI=true", "NODE_ENV=test")
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

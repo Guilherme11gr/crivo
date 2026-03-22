@@ -6,8 +6,8 @@ dist/
 *.tsbuildinfo
 
 # Go
-qg.exe
-qg
+/qg.exe
+/qg
 *.exe
 /bin/
 

@@ -17,6 +17,7 @@ type Config struct {
 	QualityGate QualityGateConfig `yaml:"quality-gate" json:"qualityGate"`
 	Coverage    CoverageConfig    `yaml:"coverage" json:"coverage"`
 	Duplication DuplicationConfig `yaml:"duplication" json:"duplication"`
+	Complexity  ComplexityConfig  `yaml:"complexity" json:"complexity"`
 }
 
 type ChecksConfig struct {
@@ -53,6 +54,10 @@ type DuplicationConfig struct {
 	Threshold float64 `yaml:"threshold" json:"threshold"`
 	MinLines  int     `yaml:"min-lines" json:"minLines"`
 	MinTokens int     `yaml:"min-tokens" json:"minTokens"`
+}
+
+type ComplexityConfig struct {
+	Threshold int `yaml:"threshold" json:"threshold"` // max cognitive complexity per function (default: 15)
 }
 
 // DefaultConfig returns sensible defaults
@@ -101,6 +106,9 @@ func DefaultConfig() *Config {
 			Threshold: 5,
 			MinLines:  5,
 			MinTokens: 50,
+		},
+		Complexity: ComplexityConfig{
+			Threshold: 15,
 		},
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/anthropics/quality-gate/internal/check"
 	"github.com/anthropics/quality-gate/internal/config"
 	"github.com/anthropics/quality-gate/internal/domain"
 )
@@ -97,7 +98,6 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		fmt.Sprintf("--min-tokens=%d", cfg.Duplication.MinTokens),
 		"--reporters=json",
 		"--output=" + reportDir,
-		"--silent",
 	}
 
 	// Add ignore patterns
@@ -105,8 +105,20 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		args = append(args, "--ignore="+exc)
 	}
 
-	cmd := exec.CommandContext(ctx, "npx", args...)
+	npxBin := check.FindNpx()
+	if npxBin == "" {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusSkipped,
+			Summary:  "npx not found (install Node.js)",
+			Duration: time.Since(start),
+		}, nil
+	}
+
+	cmd := exec.CommandContext(ctx, npxBin, args...)
 	cmd.Dir = projectDir
+	cmd.Env = check.NodeEnv()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -119,12 +131,22 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	reportPath := filepath.Join(reportDir, "jscpd-report.json")
 	data, err := os.ReadFile(reportPath)
 	if err != nil {
+		// Check if jscpd actually ran — if stderr has content, report the error
+		stderrStr := stderr.String()
+		stdoutStr := stdout.String()
+		errMsg := "No jscpd report generated"
+		if stderrStr != "" {
+			errMsg += ": " + stderrStr
+		} else if stdoutStr != "" {
+			errMsg += ": " + stdoutStr
+		}
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),
-			Status:   domain.StatusPassed,
-			Summary:  "0% duplication",
+			Status:   domain.StatusWarning,
+			Summary:  errMsg,
 			Duration: duration,
+			Details:  []string{"jscpd report not found at " + reportPath, "stderr: " + stderrStr},
 			Metrics:  map[string]float64{"percentage": 0, "clones": 0},
 		}, nil
 	}
@@ -202,3 +224,4 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		},
 	}, nil
 }
+

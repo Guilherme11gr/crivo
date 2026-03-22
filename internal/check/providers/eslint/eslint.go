@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/anthropics/quality-gate/internal/check"
 	"github.com/anthropics/quality-gate/internal/config"
 	"github.com/anthropics/quality-gate/internal/domain"
 )
@@ -78,8 +79,20 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		args = append(args, "src/")
 	}
 
-	cmd := exec.CommandContext(ctx, "npx", args...)
+	npxBin := check.FindNpx()
+	if npxBin == "" {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusSkipped,
+			Summary:  "npx not found",
+			Duration: time.Since(start),
+		}, nil
+	}
+
+	cmd := exec.CommandContext(ctx, npxBin, args...)
 	cmd.Dir = projectDir
+	cmd.Env = check.NodeEnv()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

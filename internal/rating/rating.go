@@ -165,9 +165,14 @@ func EvaluateQualityGate(result *domain.AnalysisResult) {
 
 		switch check.ID {
 		case "typescript":
+			// Use prod_errors for gate decision if available (excludes test files)
 			errors := 0.0
 			if check.Metrics != nil {
-				errors = check.Metrics["errors"]
+				if pe, ok := check.Metrics["prod_errors"]; ok {
+					errors = pe
+				} else {
+					errors = check.Metrics["errors"]
+				}
 			}
 			conditions = append(conditions, domain.QualityGateCondition{
 				Metric:    "type_errors",

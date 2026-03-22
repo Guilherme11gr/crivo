@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/anthropics/quality-gate/internal/check"
 	"github.com/anthropics/quality-gate/internal/config"
 	"github.com/anthropics/quality-gate/internal/domain"
 )
@@ -33,9 +34,21 @@ func (p *Provider) Detect(_ context.Context, projectDir string) bool {
 func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Config) (*domain.CheckResult, error) {
 	start := time.Now()
 
+	npxBin := check.FindNpx()
+	if npxBin == "" {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusSkipped,
+			Summary:  "npx not found",
+			Duration: time.Since(start),
+		}, nil
+	}
+
 	// Try npx tsc --noEmit
-	cmd := exec.CommandContext(ctx, "npx", "tsc", "--noEmit", "--pretty", "false")
+	cmd := exec.CommandContext(ctx, npxBin, "tsc", "--noEmit", "--pretty", "false")
 	cmd.Dir = projectDir
+	cmd.Env = check.NodeEnv()
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -61,27 +74,60 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		output = stderr.String()
 	}
 
-	issues := parseTscOutput(output, projectDir)
+	allIssues := parseTscOutput(output, projectDir)
 
-	errorCount := len(issues)
-	summary := strconv.Itoa(errorCount) + " error"
-	if errorCount != 1 {
+	// Separate production errors from test/mock errors
+	var prodIssues, testIssues []domain.Issue
+	for _, issue := range allIssues {
+		if isTestFile(issue.File) {
+			issue.Severity = domain.SeverityMinor
+			testIssues = append(testIssues, issue)
+		} else {
+			prodIssues = append(prodIssues, issue)
+		}
+	}
+
+	// Production errors drive the status; test errors are informational
+	totalErrors := len(allIssues)
+	prodErrors := len(prodIssues)
+	testErrors := len(testIssues)
+
+	summary := strconv.Itoa(prodErrors) + " prod error"
+	if prodErrors != 1 {
 		summary += "s"
+	}
+	if testErrors > 0 {
+		summary += ", " + strconv.Itoa(testErrors) + " in tests"
+	}
+
+	// Gate decision based on production errors only
+	status := domain.StatusFailed
+	if prodErrors == 0 {
+		if testErrors > 0 {
+			status = domain.StatusWarning
+		} else {
+			status = domain.StatusPassed
+		}
 	}
 
 	// If tsc exited non-zero but we found no parseable errors, treat as passed
-	// (can happen with tsc warnings, project references, etc.)
-	status := domain.StatusFailed
-	if errorCount == 0 {
+	if totalErrors == 0 {
 		status = domain.StatusPassed
+		summary = "0 errors"
 	}
 
+	// Show prod issues first, then test issues
+	issues := append(prodIssues, testIssues...)
 	details := make([]string, 0, min(len(issues), 20))
 	for i, issue := range issues {
 		if i >= 20 {
 			break
 		}
-		details = append(details, issue.File+":"+strconv.Itoa(issue.Line)+" "+issue.Message)
+		tag := ""
+		if isTestFile(issue.File) {
+			tag = " [test]"
+		}
+		details = append(details, issue.File+":"+strconv.Itoa(issue.Line)+" "+issue.Message+tag)
 	}
 
 	return &domain.CheckResult{
@@ -93,9 +139,31 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		Details:  details,
 		Duration: duration,
 		Metrics: map[string]float64{
-			"errors": float64(errorCount),
+			"errors":      float64(totalErrors),
+			"prod_errors": float64(prodErrors),
+			"test_errors": float64(testErrors),
 		},
 	}, nil
+}
+
+// isTestFile returns true for test, spec, mock, and fixture files.
+func isTestFile(filePath string) bool {
+	lower := strings.ToLower(filePath)
+	// Path-based: __tests__/, __mocks__/, __fixtures__/, test/, tests/, mocks/
+	for _, dir := range []string{"__tests__/", "__mocks__/", "__fixtures__/", "/test/", "/tests/", "/mocks/", "/fixtures/"} {
+		if strings.Contains(lower, dir) {
+			return true
+		}
+	}
+	// File-based: *.test.*, *.spec.*, *.mock.*, setup-tests.*, jest.*
+	base := filepath.Base(lower)
+	if strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") || strings.Contains(base, ".mock.") {
+		return true
+	}
+	if strings.HasPrefix(base, "jest.") || strings.HasPrefix(base, "setup-tests") || strings.HasPrefix(base, "test-utils") {
+		return true
+	}
+	return false
 }
 
 func parseTscOutput(output string, projectDir string) []domain.Issue {
