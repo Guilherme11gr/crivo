@@ -7,9 +7,22 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// GatePolicy controls which checks can block the gate.
+//   - "release": blocks on prod type errors, lint errors, secrets only
+//   - "strict": blocks on all check failures
+//   - "informational": never blocks, only reports
+type GatePolicy string
+
+const (
+	GatePolicyRelease       GatePolicy = "release"
+	GatePolicyStrict        GatePolicy = "strict"
+	GatePolicyInformational GatePolicy = "informational"
+)
+
 // Config represents the .qualitygate.yaml configuration
 type Config struct {
 	Profile     string            `yaml:"profile" json:"profile"`
+	Policy      GatePolicy        `yaml:"gate-policy" json:"gatePolicy"`
 	Languages   []string          `yaml:"languages" json:"languages"`
 	Src         []string          `yaml:"src" json:"src"`
 	Exclude     []string          `yaml:"exclude" json:"exclude"`
@@ -64,6 +77,7 @@ type ComplexityConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Profile:   "balanced",
+		Policy:    GatePolicyRelease,
 		Languages: []string{"typescript"},
 		Src:       []string{"src/"},
 		Exclude: []string{

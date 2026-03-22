@@ -49,6 +49,7 @@ const helpText = `
     --branch X   Compare against branch X (default: auto-detect)
     --tui        Interactive TUI dashboard (bubbletea)
     --save       Save results to local history (.qualitygate/history.db)
+    --policy P   Gate policy: release (default), strict, informational
     --help       Show this help message
 `
 
@@ -62,6 +63,7 @@ type options struct {
 	branch     string
 	save       bool
 	tuiMode    bool
+	policy     string
 }
 
 func main() {
@@ -120,6 +122,11 @@ func parseArgs(args []string) options {
 			opts.tuiMode = true
 		case "--save":
 			opts.save = true
+		case "--policy":
+			if i+1 < len(args) {
+				i++
+				opts.policy = args[i]
+			}
 		case "--help", "-h":
 			opts.command = "help"
 		default:
@@ -142,6 +149,11 @@ func runAnalysis(opts options) int {
 
 	// Load config
 	cfg, configSource := config.Load(projectDir)
+
+	// CLI --policy overrides config
+	if opts.policy != "" {
+		cfg.Policy = config.GatePolicy(opts.policy)
+	}
 
 	// Setup context with Ctrl+C cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -181,6 +193,7 @@ func runAnalysis(opts options) int {
 		fmt.Println()
 		fmt.Println(color("  🔍 Quality Gate v"+version, cyan, bold))
 		fmt.Println(color(fmt.Sprintf("  Config: %s", configSource), dim))
+		fmt.Println(color(fmt.Sprintf("  Policy: %s", cfg.Policy), dim))
 		if branch != "" {
 			fmt.Println(color(fmt.Sprintf("  Branch: %s", branch), dim))
 		}
@@ -275,7 +288,7 @@ func runAnalysis(opts options) int {
 	applyBaselineComparison(analysis, projectDir, opts)
 
 	// Calculate ratings and evaluate quality gate
-	rating.EvaluateQualityGate(analysis)
+	rating.EvaluateQualityGate(analysis, string(cfg.Policy))
 
 	// Save to history if requested
 	if opts.save {

@@ -131,8 +131,33 @@ func parseEffort(effort string) int {
 	}
 }
 
-// EvaluateQualityGate checks all conditions and returns pass/fail
-func EvaluateQualityGate(result *domain.AnalysisResult) {
+// Blocking metrics per policy
+var policyBlockers = map[string]map[string]bool{
+	"release": {
+		"type_errors": true,
+		"lint_errors": true,
+		"secrets":     true,
+	},
+	"strict": {
+		"type_errors":    true,
+		"lint_errors":    true,
+		"secrets":        true,
+		"coverage_lines": true,
+		"duplication_pct": true,
+	},
+	"informational": {},
+}
+
+// EvaluateQualityGate checks all conditions and returns pass/fail.
+// The policy parameter controls which failing conditions actually block the gate.
+func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
+	if policy == "" {
+		policy = "release"
+	}
+	blockers := policyBlockers[policy]
+	if blockers == nil {
+		blockers = policyBlockers["release"]
+	}
 	allIssues := result.AllIssues()
 
 	// Get LOC from complexity metrics if available
@@ -238,19 +263,22 @@ func EvaluateQualityGate(result *domain.AnalysisResult) {
 
 	result.Conditions = conditions
 
-	// Gate fails if any condition fails
+	// Gate fails only if a BLOCKING condition fails (per policy)
 	hasFailure := false
 	for _, c := range conditions {
-		if !c.Passed {
+		if !c.Passed && blockers[c.Metric] {
 			hasFailure = true
 			break
 		}
 	}
-	// Also fail if any check is in error state
-	for _, check := range result.Checks {
-		if check.Status == domain.StatusFailed || check.Status == domain.StatusError {
-			hasFailure = true
-			break
+
+	// In strict mode, also fail if any check is in error/failed state
+	if policy == "strict" {
+		for _, check := range result.Checks {
+			if check.Status == domain.StatusFailed || check.Status == domain.StatusError {
+				hasFailure = true
+				break
+			}
 		}
 	}
 

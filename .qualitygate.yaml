@@ -1,4 +1,5 @@
 profile: strict
+gate-policy: release
 languages:
   - go
 
