@@ -1,0 +1,34 @@
+{
+  "name": "quality-gate",
+  "version": "0.2.0",
+  "description": "Lightweight open-source alternative to SonarQube. Single binary that orchestrates OSS tools, calculates ratings, and enforces quality gates.",
+  "keywords": [
+    "quality",
+    "sonarqube",
+    "static-analysis",
+    "code-quality",
+    "linter",
+    "coverage",
+    "duplication",
+    "security"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/quality-gate"
+  },
+  "bin": {
+    "qg": "bin/qg"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "install.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=16"
+  }
+}

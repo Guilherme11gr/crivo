@@ -91,13 +91,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}, nil
 	}
 
+	// Use forward slashes for jscpd compatibility on Windows
+	srcPath = filepath.ToSlash(srcPath)
+
 	args := []string{
 		"jscpd",
 		srcPath,
 		fmt.Sprintf("--min-lines=%d", cfg.Duplication.MinLines),
 		fmt.Sprintf("--min-tokens=%d", cfg.Duplication.MinTokens),
 		"--reporters=json",
-		"--output=" + reportDir,
+		"--output=" + filepath.ToSlash(reportDir),
 	}
 
 	// Add ignore patterns

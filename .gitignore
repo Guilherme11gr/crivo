@@ -8,8 +8,11 @@ dist/
 # Go
 /qg.exe
 /qg
-*.exe
 /bin/
+
+# npm package — keep launcher script, ignore downloaded binaries
+npm/bin/qg.exe
+npm/bin/qg.cmd
 
 # Store
 .qualitygate/

@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"time"
 
+	qualitygate "github.com/anthropics/quality-gate"
 	"github.com/anthropics/quality-gate/internal/check"
 	"github.com/anthropics/quality-gate/internal/check/providers/complexity"
 	"github.com/anthropics/quality-gate/internal/check/providers/coverage"
@@ -496,12 +498,58 @@ jobs:
 		}
 	}
 
+	// Install Claude Code skills
+	installSkills(projectDir)
+
 	fmt.Println()
 	fmt.Println(color("  Done! Next steps:", bold))
 	fmt.Println(color("  1. Review .qualitygate.yaml and adjust thresholds", dim))
 	fmt.Println(color("  2. Run: qg run", dim))
 	fmt.Println(color("  3. Commit the config and workflow files", dim))
 	fmt.Println()
+}
+
+func installSkills(projectDir string) {
+	skillsRoot := ".claude/skills"
+	embeddedRoot := ".claude/skills"
+
+	installed := 0
+	err := fs.WalkDir(qualitygate.SkillsFS, embeddedRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+
+		// path is like ".claude/skills/ci/SKILL.md"
+		// We want to write to <projectDir>/.claude/skills/ci/SKILL.md
+		destPath := filepath.Join(projectDir, filepath.FromSlash(path))
+
+		if _, err := os.Stat(destPath); err == nil {
+			return nil // already exists, skip
+		}
+
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return err
+		}
+
+		data, err := qualitygate.SkillsFS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return err
+		}
+		installed++
+		return nil
+	})
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: could not install skills: %s\n", err)
+	} else if installed > 0 {
+		fmt.Printf("  %s Installed %d skill files to %s/\n", color("✅", green), installed, skillsRoot)
+	} else {
+		fmt.Println(color("  ⏭️  Claude Code skills already installed, skipping", yellow))
+	}
 }
 
 // color helpers
