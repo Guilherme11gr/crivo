@@ -3,7 +3,7 @@ package rating
 import (
 	"testing"
 
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 func TestCalculateReliability(t *testing.T) {

@@ -15,10 +15,10 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/anthropics/quality-gate"
+    "url": "https://github.com/guilherme11gr/crivo"
   },
   "bin": {
-    "qg": "bin/qg"
+    "qg": "bin/qg.js"
   },
   "scripts": {
     "postinstall": "node install.js"

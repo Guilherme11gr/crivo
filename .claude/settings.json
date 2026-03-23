@@ -14,7 +14,9 @@
       "Bash(\"d:/Users/Guilherme/Documents/development/quality-gate/qg.exe\" init:*)",
       "Bash(npm view:*)",
       "Bash(npm publish:*)",
-      "Bash(rm -f .npmrc)"
+      "Bash(rm -f .npmrc)",
+      "Bash(xargs sed:*)",
+      "Bash(ls d:/Users/Guilherme/Documents/development/quality-gate/*.json d:/Users/Guilherme/Documents/development/quality-gate/*.ts)"
     ],
     "additionalDirectories": [
       "d:\\Users\\Guilherme\\Documents\\development\\agenda-aqui",

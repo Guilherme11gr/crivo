@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/domain"
 	_ "modernc.org/sqlite"
 )
 

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anthropics/quality-gate/internal/check"
-	"github.com/anthropics/quality-gate/internal/config"
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/check"
+	"github.com/guilherme11gr/crivo/internal/config"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 var tscErrorRe = regexp.MustCompile(`^(.+)\((\d+),(\d+)\):\s+error\s+(TS\d+):\s+(.+)$`)

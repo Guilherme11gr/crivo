@@ -11,9 +11,9 @@ import (
 	"sort"
 	"time"
 
-	"github.com/anthropics/quality-gate/internal/check"
-	"github.com/anthropics/quality-gate/internal/config"
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/check"
+	"github.com/guilherme11gr/crivo/internal/config"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 // coverageSummary matches Jest's coverage-summary.json format

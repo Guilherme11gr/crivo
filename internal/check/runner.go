@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anthropics/quality-gate/internal/config"
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/config"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 // ProgressEvent is emitted as checks run (for TUI/console progress)

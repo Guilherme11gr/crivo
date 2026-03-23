@@ -3,8 +3,8 @@ package check
 import (
 	"context"
 
-	"github.com/anthropics/quality-gate/internal/config"
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/config"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 // Provider is the core abstraction — each check implements this interface

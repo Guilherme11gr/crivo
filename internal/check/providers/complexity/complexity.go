@@ -17,8 +17,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/anthropics/quality-gate/internal/config"
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/config"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 //go:embed cognitive.js

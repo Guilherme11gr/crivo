@@ -89,6 +89,7 @@ type QualityGateCondition struct {
 
 // AnalysisResult is the top-level result of a full analysis run
 type AnalysisResult struct {
+	Version       string                `json:"version"`
 	ProjectDir    string                `json:"projectDir"`
 	Status        QualityGateStatus     `json:"status"`
 	Checks        []CheckResult         `json:"checks"`

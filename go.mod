@@ -1,4 +1,4 @@
-module github.com/anthropics/quality-gate
+module github.com/guilherme11gr/crivo
 
 go 1.26.1
 

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 VERSION="${1:-latest}"
-REPO="anthropics/quality-gate"
+REPO="guilherme11gr/crivo"
 INSTALL_DIR="${QG_INSTALL_DIR:-/usr/local/bin}"
 
 # Detect OS and architecture

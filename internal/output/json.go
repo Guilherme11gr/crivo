@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 // JSONReport is the structured output for AI agents
@@ -78,7 +78,7 @@ func ToJSON(result *domain.AnalysisResult) ([]byte, error) {
 
 func toJSONReport(result *domain.AnalysisResult) JSONReport {
 	report := JSONReport{
-		Version:     "1.0.0",
+		Version:     result.Version,
 		Status:      result.Status,
 		ProjectDir:  result.ProjectDir,
 		Timestamp:   result.Timestamp,

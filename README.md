@@ -13,7 +13,7 @@ npm install -g crivo
 Ou via Go:
 
 ```bash
-go install github.com/anthropics/quality-gate/cmd/qg@latest
+go install github.com/guilherme11gr/crivo/cmd/qg@latest
 ```
 
 ## Uso

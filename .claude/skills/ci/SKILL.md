@@ -102,7 +102,7 @@ jobs:
 
       - name: Install quality-gate
         run: |
-          curl -fsSL https://github.com/anthropics/quality-gate/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
+          curl -fsSL https://github.com/guilherme11gr/crivo/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
           sudo mv qg /usr/local/bin/
 
       - name: Run Quality Gate (PR)
@@ -151,7 +151,7 @@ quality-gate:
   stage: test
   image: node:20
   before_script:
-    - curl -fsSL https://github.com/anthropics/quality-gate/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
+    - curl -fsSL https://github.com/guilherme11gr/crivo/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
     - mv qg /usr/local/bin/
     - npm ci
   script:
@@ -173,7 +173,7 @@ Use the helper scripts approach — generate standalone shell scripts that any C
 
 ```bash
 # Install
-curl -fsSL https://github.com/anthropics/quality-gate/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
+curl -fsSL https://github.com/guilherme11gr/crivo/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
 export PATH=$PWD:$PATH
 
 # Run

@@ -9,26 +9,26 @@ import (
 	"path/filepath"
 	"time"
 
-	qualitygate "github.com/anthropics/quality-gate"
-	"github.com/anthropics/quality-gate/internal/check"
-	"github.com/anthropics/quality-gate/internal/check/providers/complexity"
-	"github.com/anthropics/quality-gate/internal/check/providers/coverage"
-	"github.com/anthropics/quality-gate/internal/check/providers/deadcode"
-	"github.com/anthropics/quality-gate/internal/check/providers/duplication"
-	"github.com/anthropics/quality-gate/internal/check/providers/eslint"
-	"github.com/anthropics/quality-gate/internal/check/providers/secrets"
-	"github.com/anthropics/quality-gate/internal/check/providers/semgrep"
-	"github.com/anthropics/quality-gate/internal/check/providers/typescript"
-	"github.com/anthropics/quality-gate/internal/config"
-	"github.com/anthropics/quality-gate/internal/domain"
-	gitutil "github.com/anthropics/quality-gate/internal/git"
-	"github.com/anthropics/quality-gate/internal/output"
-	"github.com/anthropics/quality-gate/internal/rating"
-	"github.com/anthropics/quality-gate/internal/store"
-	"github.com/anthropics/quality-gate/internal/tui"
+	qualitygate "github.com/guilherme11gr/crivo"
+	"github.com/guilherme11gr/crivo/internal/check"
+	"github.com/guilherme11gr/crivo/internal/check/providers/complexity"
+	"github.com/guilherme11gr/crivo/internal/check/providers/coverage"
+	"github.com/guilherme11gr/crivo/internal/check/providers/deadcode"
+	"github.com/guilherme11gr/crivo/internal/check/providers/duplication"
+	"github.com/guilherme11gr/crivo/internal/check/providers/eslint"
+	"github.com/guilherme11gr/crivo/internal/check/providers/secrets"
+	"github.com/guilherme11gr/crivo/internal/check/providers/semgrep"
+	"github.com/guilherme11gr/crivo/internal/check/providers/typescript"
+	"github.com/guilherme11gr/crivo/internal/config"
+	"github.com/guilherme11gr/crivo/internal/domain"
+	gitutil "github.com/guilherme11gr/crivo/internal/git"
+	"github.com/guilherme11gr/crivo/internal/output"
+	"github.com/guilherme11gr/crivo/internal/rating"
+	"github.com/guilherme11gr/crivo/internal/store"
+	"github.com/guilherme11gr/crivo/internal/tui"
 )
 
-const version = "0.2.0"
+var version = "0.2.0"
 
 const helpText = `
   quality-gate — Lightweight quality gate for code analysis
@@ -233,6 +233,7 @@ func runAnalysis(opts options) int {
 
 	// Build analysis result
 	analysis := &domain.AnalysisResult{
+		Version:       version,
 		ProjectDir:    projectDir,
 		Checks:        results,
 		TotalDuration: time.Since(start),
@@ -476,7 +477,7 @@ jobs:
         with:
           go-version: '1.22'
       - name: Install quality-gate
-        run: go install github.com/anthropics/quality-gate/cmd/qg@latest
+        run: go install github.com/guilherme11gr/crivo/cmd/qg@latest
       - name: Run Quality Gate
         run: qg run --md quality-gate-report.md --sarif quality-gate.sarif --save
       - name: Upload SARIF

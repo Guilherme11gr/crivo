@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 // SARIF 2.1.0 structures
@@ -133,7 +133,7 @@ func ToSARIF(result *domain.AnalysisResult) ([]byte, error) {
 					Driver: sarifDriver{
 						Name:           "quality-gate",
 						Version:        "0.1.0",
-						InformationURI: "https://github.com/anthropics/quality-gate",
+						InformationURI: "https://github.com/guilherme11gr/crivo",
 						Rules:          rules,
 					},
 				},

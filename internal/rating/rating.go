@@ -1,7 +1,7 @@
 package rating
 
 import (
-	"github.com/anthropics/quality-gate/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
 // CalculateReliability returns A-E based on bug count by severity

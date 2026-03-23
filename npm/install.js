@@ -10,7 +10,7 @@ const os = require("os");
 const zlib = require("zlib");
 
 const VERSION = require("./package.json").version;
-const REPO = "anthropics/quality-gate";
+const REPO = "guilherme11gr/crivo";
 
 const PLATFORM_MAP = {
   darwin: "darwin",

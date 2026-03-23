@@ -49,4 +49,4 @@ qg run --save
 
 ## More
 
-See [github.com/anthropics/quality-gate](https://github.com/anthropics/quality-gate) for full documentation.
+See [github.com/guilherme11gr/crivo](https://github.com/guilherme11gr/crivo) for full documentation.

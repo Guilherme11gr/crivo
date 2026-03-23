@@ -8,8 +8,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/anthropics/quality-gate/internal/domain"
-	"github.com/anthropics/quality-gate/internal/store"
+	"github.com/guilherme11gr/crivo/internal/domain"
+	"github.com/guilherme11gr/crivo/internal/store"
 )
 
 // Tab represents a dashboard tab

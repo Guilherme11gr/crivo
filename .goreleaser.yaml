@@ -45,7 +45,7 @@ brews:
       owner: anthropics
       name: homebrew-tap
     description: "Lightweight quality gate for code analysis — open source SonarQube alternative"
-    homepage: "https://github.com/anthropics/quality-gate"
+    homepage: "https://github.com/guilherme11gr/crivo"
     license: "MIT"
     install: |
       bin.install "qg"
