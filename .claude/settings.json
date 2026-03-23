@@ -11,10 +11,14 @@
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(f''''Status: {d[\"\"status\"\"]}''''\\); [print\\(f''''  {c[\"\"name\"\"]}: {c[\"\"status\"\"]} - {c[\"\"summary\"\"]}''''\\) for c in d[''''checks'''']]\")",
       "Bash(mkdir -p /tmp/qg-test)",
       "Bash(rm -rf .qualitygate.yaml .github .claude)",
-      "Bash(\"d:/Users/Guilherme/Documents/development/quality-gate/qg.exe\" init:*)"
+      "Bash(\"d:/Users/Guilherme/Documents/development/quality-gate/qg.exe\" init:*)",
+      "Bash(npm view:*)",
+      "Bash(npm publish:*)",
+      "Bash(rm -f .npmrc)"
     ],
     "additionalDirectories": [
-      "d:\\Users\\Guilherme\\Documents\\development\\agenda-aqui"
+      "d:\\Users\\Guilherme\\Documents\\development\\agenda-aqui",
+      "\\tmp"
     ]
   }
 }

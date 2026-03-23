@@ -1,5 +1,5 @@
 {
-  "name": "quality-gate",
+  "name": "crivo",
   "version": "0.2.0",
   "description": "Lightweight open-source alternative to SonarQube. Single binary that orchestrates OSS tools, calculates ratings, and enforces quality gates.",
   "keywords": [
