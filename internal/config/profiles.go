@@ -33,6 +33,9 @@ func applyStrict(cfg *Config) {
 	cfg.Duplication.Threshold = 3
 	cfg.Duplication.MinLines = 3
 	cfg.Duplication.MinTokens = 30
+	cfg.Duplication.Semantic = true
+	cfg.Duplication.SemanticMinLines = 4
+	cfg.Duplication.SimilarityThreshold = 0.80
 
 	// Enable all checks in strict mode
 	cfg.Checks.Typescript = true
@@ -68,4 +71,7 @@ func applyLenient(cfg *Config) {
 	cfg.Duplication.Threshold = 10
 	cfg.Duplication.MinLines = 10
 	cfg.Duplication.MinTokens = 70
+	cfg.Duplication.Semantic = true
+	cfg.Duplication.SemanticMinLines = 8
+	cfg.Duplication.SimilarityThreshold = 0.90
 }

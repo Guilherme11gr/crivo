@@ -213,17 +213,79 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		})
 	}
 
+	// --- Semantic duplication detection (built-in, no external tool) ---
+	semanticCloneCount := 0
+	if cfg.Duplication.Semantic {
+		srcDirs := cfg.Src
+		if len(srcDirs) == 0 {
+			srcDirs = []string{"src/"}
+		}
+		minFuncLines := cfg.Duplication.SemanticMinLines
+		if minFuncLines <= 0 {
+			minFuncLines = 5
+		}
+		simThreshold := cfg.Duplication.SimilarityThreshold
+		if simThreshold <= 0 {
+			simThreshold = 0.85
+		}
+
+		clones := findSemanticClones(projectDir, srcDirs, cfg.Exclude, minFuncLines, simThreshold)
+		semanticCloneCount = len(clones)
+
+		for i, clone := range clones {
+			if i >= 20 {
+				break // cap reported issues
+			}
+			label := "Exact semantic clone"
+			sev := domain.SeverityMajor
+			if clone.Similarity < 1.0 {
+				label = fmt.Sprintf("Similar clone (%.0f%%)", clone.Similarity*100)
+				sev = domain.SeverityMinor
+			}
+			issues = append(issues, domain.Issue{
+				RuleID:   "semantic-duplication",
+				Message:  fmt.Sprintf("%s: %s:%d (%s) ≈ %s:%d (%s)", label, clone.A.File, clone.A.Line, clone.A.Name, clone.B.File, clone.B.Line, clone.B.Name),
+				File:     clone.A.File,
+				Line:     clone.A.Line,
+				Column:   1,
+				Severity: sev,
+				Type:     domain.IssueTypeCodeSmell,
+				Source:   "semantic",
+				Effort:   fmt.Sprintf("%dmin", clone.A.BodyLines*3),
+			})
+
+			details = append(details, fmt.Sprintf("[semantic] %s:%d %s ≈ %s:%d %s (%.0f%%)",
+				clone.A.File, clone.A.Line, clone.A.Name,
+				clone.B.File, clone.B.Line, clone.B.Name,
+				clone.Similarity*100))
+		}
+
+		// Update status if semantic clones found
+		if semanticCloneCount > 0 && status == domain.StatusPassed {
+			status = domain.StatusWarning
+		}
+		if semanticCloneCount > 5 && status != domain.StatusFailed {
+			status = domain.StatusFailed
+		}
+	}
+
+	semanticStr := ""
+	if cfg.Duplication.Semantic {
+		semanticStr = fmt.Sprintf(" · %d semantic clones", semanticCloneCount)
+	}
+
 	return &domain.CheckResult{
 		Name:    p.Name(),
 		ID:      p.ID(),
 		Status:  status,
-		Summary: fmt.Sprintf("%.1f%% (max: %.1f%%)", pct, cfg.Duplication.Threshold),
+		Summary: fmt.Sprintf("%.1f%% (max: %.1f%%)%s", pct, cfg.Duplication.Threshold, semanticStr),
 		Issues:  issues,
 		Details: details,
 		Duration: duration,
 		Metrics: map[string]float64{
-			"percentage": pct,
-			"clones":     float64(cloneCount),
+			"percentage":      pct,
+			"clones":          float64(cloneCount),
+			"semantic_clones": float64(semanticCloneCount),
 		},
 	}, nil
 }

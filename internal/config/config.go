@@ -69,6 +69,11 @@ type DuplicationConfig struct {
 	Threshold float64 `yaml:"threshold" json:"threshold"`
 	MinLines  int     `yaml:"min-lines" json:"minLines"`
 	MinTokens int     `yaml:"min-tokens" json:"minTokens"`
+
+	// Semantic duplication detection (built-in, no external tool needed)
+	Semantic              bool    `yaml:"semantic" json:"semantic"`                             // enable semantic clone detection
+	SemanticMinLines      int     `yaml:"semantic-min-lines" json:"semanticMinLines"`           // min function body lines (default: 5)
+	SimilarityThreshold   float64 `yaml:"similarity-threshold" json:"similarityThreshold"`     // 0.0-1.0, below 1.0 enables fuzzy matching (default: 0.85)
 }
 
 type ComplexityConfig struct {
@@ -146,9 +151,12 @@ func DefaultConfig() *Config {
 			Statements: 60,
 		},
 		Duplication: DuplicationConfig{
-			Threshold: 5,
-			MinLines:  5,
-			MinTokens: 50,
+			Threshold:           5,
+			MinLines:            5,
+			MinTokens:           50,
+			Semantic:            true,
+			SemanticMinLines:    5,
+			SimilarityThreshold: 0.85,
 		},
 		Complexity: ComplexityConfig{
 			Threshold: 15,
