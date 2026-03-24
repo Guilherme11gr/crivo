@@ -147,8 +147,9 @@ func parseKnipOutput(output string, projectDir string) ([]domain.Issue, int, int
 			continue
 		}
 
-		// Skip non-file lines
-		if !strings.Contains(trimmed, "/") && !strings.Contains(trimmed, "\\") && !strings.Contains(trimmed, ".") {
+		// Skip non-file lines (except in Unused dependencies where entries are package names)
+		if currentSection != "Unused dependencies" &&
+			!strings.Contains(trimmed, "/") && !strings.Contains(trimmed, "\\") && !strings.Contains(trimmed, ".") {
 			continue
 		}
 
