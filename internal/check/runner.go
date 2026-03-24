@@ -37,13 +37,17 @@ func NewRunner(registry *Registry, maxWorkers int) *Runner {
 }
 
 // Run executes all applicable checks in parallel and returns results
-func (r *Runner) Run(ctx context.Context, projectDir string, cfg *config.Config, progressCh chan<- ProgressEvent) ([]domain.CheckResult, error) {
+func (r *Runner) Run(ctx context.Context, projectDir string, cfg *config.Config, disabledChecks map[string]bool, progressCh chan<- ProgressEvent) ([]domain.CheckResult, error) {
 	providers := r.registry.All()
 
 	// Filter to enabled and detected providers
 	var active []Provider
 	for _, p := range providers {
-		if !isCheckEnabled(p.ID(), cfg) {
+		if !isCheckEnabled(p.ID(), cfg, disabledChecks) {
+			summary := "Disabled in config"
+			if disabledChecks[p.ID()] {
+				summary = "Disabled by CLI"
+			}
 			if progressCh != nil {
 				progressCh <- ProgressEvent{
 					ProviderID:   p.ID(),
@@ -53,7 +57,7 @@ func (r *Runner) Run(ctx context.Context, projectDir string, cfg *config.Config,
 						Name:    p.Name(),
 						ID:      p.ID(),
 						Status:  domain.StatusSkipped,
-						Summary: "Disabled in config",
+						Summary: summary,
 					},
 				}
 			}
@@ -92,7 +96,7 @@ func (r *Runner) Run(ctx context.Context, projectDir string, cfg *config.Config,
 		go func(provider Provider) {
 			defer wg.Done()
 
-			sem <- struct{}{} // acquire
+			sem <- struct{}{}        // acquire
 			defer func() { <-sem }() // release
 
 			if progressCh != nil {
@@ -145,7 +149,11 @@ func (r *Runner) Run(ctx context.Context, projectDir string, cfg *config.Config,
 	return results, nil
 }
 
-func isCheckEnabled(id string, cfg *config.Config) bool {
+func isCheckEnabled(id string, cfg *config.Config, disabledChecks map[string]bool) bool {
+	if disabledChecks != nil && disabledChecks[id] {
+		return false
+	}
+
 	switch id {
 	case "typescript":
 		return cfg.Checks.Typescript

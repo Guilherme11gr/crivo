@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"time"
 
 	qualitygate "github.com/guilherme11gr/crivo"
@@ -28,7 +29,7 @@ import (
 	"github.com/guilherme11gr/crivo/internal/tui"
 )
 
-var version = "3.0.0"
+var version = "3.0.1"
 
 const helpText = `
   quality-gate — Lightweight quality gate for code analysis
@@ -49,6 +50,7 @@ const helpText = `
     --verbose    Show all details (not just failures)
     --new-code   Only analyze new/changed code (vs default branch)
     --branch X   Compare against branch X (default: auto-detect)
+    --disable X  Disable one or more checks for this run (repeat or use commas)
     --tui        Interactive TUI dashboard (bubbletea)
     --save       Save results to local history (.qualitygate/history.db)
     --policy P   Gate policy: release (default), strict, informational
@@ -56,16 +58,17 @@ const helpText = `
 `
 
 type options struct {
-	command    string
-	jsonOutput bool
-	sarifFile  string
-	mdOutput   string
-	verbose    bool
-	newCode    bool
-	branch     string
-	save       bool
-	tuiMode    bool
-	policy     string
+	command        string
+	jsonOutput     bool
+	sarifFile      string
+	mdOutput       string
+	verbose        bool
+	newCode        bool
+	branch         string
+	disabledChecks map[string]bool
+	save           bool
+	tuiMode        bool
+	policy         string
 }
 
 func main() {
@@ -92,7 +95,10 @@ func main() {
 }
 
 func parseArgs(args []string) options {
-	opts := options{command: "run"}
+	opts := options{
+		command:        "run",
+		disabledChecks: map[string]bool{},
+	}
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -120,6 +126,13 @@ func parseArgs(args []string) options {
 				i++
 				opts.branch = args[i]
 			}
+		case "--disable":
+			if i+1 < len(args) {
+				i++
+				for _, id := range parseCheckList(args[i]) {
+					opts.disabledChecks[id] = true
+				}
+			}
 		case "--tui":
 			opts.tuiMode = true
 		case "--save":
@@ -140,6 +153,19 @@ func parseArgs(args []string) options {
 	}
 
 	return opts
+}
+
+func parseCheckList(value string) []string {
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(strings.ToLower(part))
+		if trimmed == "" {
+			continue
+		}
+		result = append(result, trimmed)
+	}
+	return result
 }
 
 func runAnalysis(opts options) int {
@@ -225,7 +251,7 @@ func runAnalysis(opts options) int {
 	}
 
 	start := time.Now()
-	results, err := runner.Run(ctx, projectDir, cfg, progressCh)
+	results, err := runner.Run(ctx, projectDir, cfg, opts.disabledChecks, progressCh)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		return 1

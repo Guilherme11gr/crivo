@@ -1,6 +1,6 @@
 {
   "name": "crivo",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Lightweight open-source alternative to SonarQube. Single binary that orchestrates OSS tools, calculates ratings, and enforces quality gates.",
   "keywords": [
     "quality",

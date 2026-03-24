@@ -25,6 +25,7 @@ qg run --json              # JSON estruturado (pra CI/agentes de IA)
 qg run --verbose           # Detalhes completos
 qg run --tui               # Dashboard interativo
 qg run --new-code          # Só arquivos alterados (pra PRs)
+qg run --disable complexity # Desabilita checks específicos nesta execução
 qg run --save              # Salva no histórico local pra acompanhar tendências
 qg run --md report.md      # Saída em Markdown (pra comentários em PR)
 qg run --sarif report.sarif # SARIF 2.1.0 (pra GitHub Code Scanning)
