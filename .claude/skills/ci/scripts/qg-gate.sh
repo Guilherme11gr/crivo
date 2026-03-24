@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# qg-gate.sh — Smart quality gate runner for CI
+# crivo-gate.sh — Smart quality gate runner for CI
 # Detects context (PR vs push) and runs with appropriate flags.
 #
-# Usage: ./qg-gate.sh [--strict|--lenient|--informational]
+# Usage: ./crivo-gate.sh [--strict|--lenient|--informational]
 #
 # Environment variables (auto-detected from common CI platforms):
-#   QG_MODE         - "pr" or "push" (auto-detected from CI env)
-#   QG_BASE_BRANCH  - branch to compare against (default: auto-detect)
-#   QG_OUTPUT_DIR   - where to write reports (default: ./qg-reports)
-#   QG_EXTRA_FLAGS  - additional flags to pass to qg
+#   CRIVO_MODE         - "pr" or "push" (auto-detected from CI env)
+#   CRIVO_BASE_BRANCH  - branch to compare against (default: auto-detect)
+#   CRIVO_OUTPUT_DIR   - where to write reports (default: ./crivo-reports)
+#   CRIVO_EXTRA_FLAGS  - additional flags to pass to crivo
 #
 # Outputs:
-#   qg-reports/output.json    - Full JSON report
-#   qg-reports/report.md      - Markdown for PR comments
-#   qg-reports/report.sarif   - SARIF for code scanning
+#   crivo-reports/output.json    - Full JSON report
+#   crivo-reports/report.md      - Markdown for PR comments
+#   crivo-reports/report.sarif   - SARIF for code scanning
 #   Exit code 0 (pass) or 1 (fail)
 set -euo pipefail
 
-MODE="${QG_MODE:-}"
-OUTPUT_DIR="${QG_OUTPUT_DIR:-./qg-reports}"
-EXTRA_FLAGS="${QG_EXTRA_FLAGS:-}"
+MODE="${CRIVO_MODE:-}"
+OUTPUT_DIR="${CRIVO_OUTPUT_DIR:-./crivo-reports}"
+EXTRA_FLAGS="${CRIVO_EXTRA_FLAGS:-}"
 GATE_POLICY="${1:-}"
-QG_BIN="${QG_BIN:-crivo}"
+CRIVO_BIN="${CRIVO_BIN:-crivo}"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -111,35 +111,35 @@ echo "  Mode:   $MODE"
 echo "  Output: $OUTPUT_DIR"
 
 # ---------------------------------------------------------------------------
-# Build qg flags
+# Build crivo flags
 # ---------------------------------------------------------------------------
 MD_PATH=$(to_native_path "$OUTPUT_DIR/report.md")
 SARIF_PATH=$(to_native_path "$OUTPUT_DIR/report.sarif")
 
-QG_FLAGS="--save"
-QG_FLAGS="$QG_FLAGS --md $MD_PATH"
-QG_FLAGS="$QG_FLAGS --sarif $SARIF_PATH"
+CRIVO_FLAGS="--save"
+CRIVO_FLAGS="$CRIVO_FLAGS --md $MD_PATH"
+CRIVO_FLAGS="$CRIVO_FLAGS --sarif $SARIF_PATH"
 
 if [ "$MODE" = "pr" ]; then
-  QG_FLAGS="$QG_FLAGS --new-code"
-  if [ -n "${QG_BASE_BRANCH:-}" ]; then
-    QG_FLAGS="$QG_FLAGS --branch $QG_BASE_BRANCH"
+  CRIVO_FLAGS="$CRIVO_FLAGS --new-code"
+  if [ -n "${CRIVO_BASE_BRANCH:-}" ]; then
+    CRIVO_FLAGS="$CRIVO_FLAGS --branch $CRIVO_BASE_BRANCH"
   fi
 fi
 
 if [ -n "$EXTRA_FLAGS" ]; then
-  QG_FLAGS="$QG_FLAGS $EXTRA_FLAGS"
+  CRIVO_FLAGS="$CRIVO_FLAGS $EXTRA_FLAGS"
 fi
 
 # ---------------------------------------------------------------------------
 # Run quality gate
 # ---------------------------------------------------------------------------
-echo "  Running: $QG_BIN run $QG_FLAGS --json"
+echo "  Running: $CRIVO_BIN run $CRIVO_FLAGS --json"
 echo ""
 
 EXIT_CODE=0
 # Run: JSON goes to file, stderr stays on console (never mix them)
-$QG_BIN run $QG_FLAGS --json > "$OUTPUT_DIR/output.json" 2>"$OUTPUT_DIR/stderr.log" || EXIT_CODE=$?
+$CRIVO_BIN run $CRIVO_FLAGS --json > "$OUTPUT_DIR/output.json" 2>"$OUTPUT_DIR/stderr.log" || EXIT_CODE=$?
 
 # Show stderr to console for debugging
 if [ -s "$OUTPUT_DIR/stderr.log" ]; then
