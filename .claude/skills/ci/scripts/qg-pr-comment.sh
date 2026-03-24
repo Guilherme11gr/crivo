@@ -36,7 +36,7 @@ fi
 # ---------------------------------------------------------------------------
 if [ ! -f "$REPORT" ]; then
   echo "Error: report not found at $REPORT"
-  echo "Run 'qg run --md $REPORT' first."
+  echo "Run 'crivo run --md $REPORT' first."
   exit 1
 fi
 

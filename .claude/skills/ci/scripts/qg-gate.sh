@@ -21,7 +21,7 @@ MODE="${QG_MODE:-}"
 OUTPUT_DIR="${QG_OUTPUT_DIR:-./qg-reports}"
 EXTRA_FLAGS="${QG_EXTRA_FLAGS:-}"
 GATE_POLICY="${1:-}"
-QG_BIN="${QG_BIN:-qg}"
+QG_BIN="${QG_BIN:-crivo}"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -192,7 +192,7 @@ case "$GATE_POLICY" in
     fi
     ;;
   --strict)
-    echo "  Policy: strict — using qg exit code directly"
+    echo "  Policy: strict — using crivo exit code directly"
     exit $EXIT_CODE
     ;;
   *)
@@ -206,7 +206,7 @@ case "$GATE_POLICY" in
       echo "  Policy: default — passed (coverage/complexity warnings tolerated)"
       exit 0
     fi
-    # Fallback: use qg exit code
+    # Fallback: use crivo exit code
     exit $EXIT_CODE
     ;;
 esac

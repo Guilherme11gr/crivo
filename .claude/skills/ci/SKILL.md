@@ -1,6 +1,6 @@
 ---
 name: ci
-description: Set up and manage quality-gate CI pipelines. Use when the user asks to add quality checks to CI/CD, configure GitHub Actions, GitLab CI, or any pipeline with qg. Also use when debugging CI failures related to quality gate.
+description: Set up and manage quality-gate CI pipelines. Use when the user asks to add quality checks to CI/CD, configure GitHub Actions, GitLab CI, or any pipeline with crivo. Also use when debugging CI failures related to quality gate.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Agent
 user-invocable: true
 argument-hint: [setup|diagnose|pr-comment|baseline|show-config]
@@ -8,11 +8,11 @@ argument-hint: [setup|diagnose|pr-comment|baseline|show-config]
 
 # Quality Gate CI Skill
 
-You are an expert at integrating **quality-gate (`qg`)** into CI/CD pipelines. This skill covers setup, scripts, debugging, and advanced patterns.
+You are an expert at integrating **quality-gate (`crivo`)** into CI/CD pipelines. This skill covers setup, scripts, debugging, and advanced patterns.
 
 ## What is quality-gate?
 
-A single Go binary (`qg`) that orchestrates existing OSS tools (tsc, eslint, jest, jscpd, semgrep, gitleaks) and produces unified reports. Zero config to start, `.qualitygate.yaml` to customize.
+A single Go binary (`crivo`) that orchestrates existing OSS tools (tsc, eslint, jest, jscpd, semgrep, gitleaks) and produces unified reports. Zero config to start, `.qualitygate.yaml` to customize.
 
 **Key outputs:**
 - Exit code 0 (passed) or 1 (failed) — native CI gate
@@ -54,7 +54,7 @@ Set up automatic PR comments with quality gate results:
 ### `baseline`
 
 Set up baseline comparison so legacy debt doesn't block PRs:
-1. Run initial `qg run --save` to capture baseline
+1. Run initial `crivo run --save` to capture baseline
 2. Configure CI to use `--new-code` for PRs
 3. Set up the baseline update workflow on main branch merges
 
@@ -103,12 +103,12 @@ jobs:
       - name: Install quality-gate
         run: |
           curl -fsSL https://github.com/guilherme11gr/crivo/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
-          sudo mv qg /usr/local/bin/
+          sudo mv crivo /usr/local/bin/
 
       - name: Run Quality Gate (PR)
         if: github.event_name == 'pull_request'
         run: |
-          qg run \
+          crivo run \
             --new-code \
             --json > qg-output.json \
             --md qg-report.md \
@@ -119,7 +119,7 @@ jobs:
 
       - name: Run Quality Gate (Push to main)
         if: github.event_name == 'push'
-        run: qg run --save --sarif qg-report.sarif
+        run: crivo run --save --sarif qg-report.sarif
 
       - name: Upload SARIF
         if: always() && hashFiles('qg-report.sarif') != ''
@@ -152,10 +152,10 @@ quality-gate:
   image: node:20
   before_script:
     - curl -fsSL https://github.com/guilherme11gr/crivo/releases/latest/download/quality-gate_linux_amd64.tar.gz | tar xz
-    - mv qg /usr/local/bin/
+    - mv crivo /usr/local/bin/
     - npm ci
   script:
-    - qg run --new-code --md qg-report.md --sarif qg-report.sarif --save
+    - crivo run --new-code --md qg-report.md --sarif qg-report.sarif --save
   artifacts:
     reports:
       sast: qg-report.sarif
@@ -177,7 +177,7 @@ curl -fsSL https://github.com/guilherme11gr/crivo/releases/latest/download/quali
 export PATH=$PWD:$PATH
 
 # Run
-qg run --new-code --json > qg-output.json --md qg-report.md --save
+crivo run --new-code --json > qg-output.json --md qg-report.md --save
 ```
 
 ---
@@ -287,13 +287,13 @@ quality-gate:
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `node not found` | qg needs node for AST analysis + jest | Add `setup-node` step before qg |
-| `typescript not in node_modules` | Missing `npm ci` before qg run | Add `npm ci` step |
+| `node not found` | crivo needs node for AST analysis + jest | Add `setup-node` step before crivo |
+| `typescript not in node_modules` | Missing `npm ci` before crivo run | Add `npm ci` step |
 | `tsc: command not found` | TypeScript not in devDependencies | `npm i -D typescript` |
 | Coverage shows 0% | Jest not configured or no test files | Check `jest.config.*` exists |
 | `--new-code` shows no issues | Shallow clone, no git history | Use `fetch-depth: 0` |
 | SARIF upload fails | Missing `security-events: write` permission | Add to workflow permissions |
-| Gate fails on legacy code | No baseline saved | Run `qg run --save` on main first |
+| Gate fails on legacy code | No baseline saved | Run `crivo run --save` on main first |
 | Duplication timeout | Huge codebase, no excludes | Add excludes to `.qualitygate.yaml` |
 
 ### Reading the JSON output
@@ -355,8 +355,8 @@ The JSON output (`--json`) has this structure — teach agents to parse it:
 ### Feeding output to an AI agent
 
 ```bash
-# Run qg, capture JSON, send to agent
-qg run --json > qg-output.json
+# Run crivo, capture JSON, send to agent
+crivo run --json > qg-output.json
 
 # Example: ask Claude to fix the top issues
 cat qg-output.json | claude "Fix the top 5 most critical issues from this quality gate report"

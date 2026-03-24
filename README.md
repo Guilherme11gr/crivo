@@ -2,7 +2,7 @@
 
 Binário Go que roda ferramentas de análise existentes (tsc, eslint, jest, jscpd, semgrep, gitleaks, knip), normaliza a saída, calcula ratings e diz se o código tá pronto pra subir.
 
-Sem servidor, sem setup de banco, sem conta. Só `qg run`.
+Sem servidor, sem setup de banco, sem conta. Só `crivo run`.
 
 ## Instalação
 
@@ -13,23 +13,23 @@ npm install -g crivo
 Ou via Go:
 
 ```bash
-go install github.com/guilherme11gr/crivo/cmd/qg@latest
+go install github.com/guilherme11gr/crivo/cmd/crivo@latest
 ```
 
 ## Uso
 
 ```bash
-qg init                    # Cria config, workflow do GitHub Actions e skills do Claude Code
-qg run                     # Roda todos os checks
-qg run --json              # JSON estruturado (pra CI/agentes de IA)
-qg run --verbose           # Detalhes completos
-qg run --tui               # Dashboard interativo
-qg run --new-code          # Só arquivos alterados (pra PRs)
-qg run --disable complexity # Desabilita checks específicos nesta execução
-qg run --save              # Salva no histórico local pra acompanhar tendências
-qg run --md report.md      # Saída em Markdown (pra comentários em PR)
-qg run --sarif report.sarif # SARIF 2.1.0 (pra GitHub Code Scanning)
-qg trends                  # Histórico com sparklines dos últimos runs
+crivo init                    # Cria config, workflow do GitHub Actions e skills do Claude Code
+crivo run                     # Roda todos os checks
+crivo run --json              # JSON estruturado (pra CI/agentes de IA)
+crivo run --verbose           # Detalhes completos
+crivo run --tui               # Dashboard interativo
+crivo run --new-code          # Só arquivos alterados (pra PRs)
+crivo run --disable complexity # Desabilita checks específicos nesta execução
+crivo run --save              # Salva no histórico local pra acompanhar tendências
+crivo run --md report.md      # Saída em Markdown (pra comentários em PR)
+crivo run --sarif report.sarif # SARIF 2.1.0 (pra GitHub Code Scanning)
+crivo trends                  # Histórico com sparklines dos últimos runs
 ```
 
 ## O que analisa
@@ -74,12 +74,12 @@ gate-policy: release
 Ou override por execução:
 
 ```bash
-qg run --policy strict
+crivo run --policy strict
 ```
 
 ## Configuração
 
-`qg init` cria um `.qualitygate.yaml` com defaults razoáveis. Exemplo:
+`crivo init` cria um `.qualitygate.yaml` com defaults razoáveis. Exemplo:
 
 ```yaml
 profile: balanced
@@ -148,7 +148,7 @@ complexity:
 
 ## TUI
 
-`qg run --tui` abre um dashboard interativo com três abas:
+`crivo run --tui` abre um dashboard interativo com três abas:
 
 - **Dashboard** — status do gate, ratings, resultado dos checks
 - **Issues** — lista navegável com filtro por tipo (bugs, vulnerabilidades, code smells)
@@ -167,9 +167,9 @@ Isso significa que projetos existentes não são punidos por dívida histórica 
 
 ## Integração com CI
 
-`qg init` cria um workflow de GitHub Actions pronto. O fluxo:
+`crivo init` cria um workflow de GitHub Actions pronto. O fluxo:
 
-1. Roda `qg run --md report.md --sarif report.sarif --save`
+1. Roda `crivo run --md report.md --sarif report.sarif --save`
 2. Faz upload do SARIF pro GitHub Code Scanning
 3. Posta o markdown como comentário no PR
 

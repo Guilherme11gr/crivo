@@ -5,7 +5,7 @@ const { execFileSync } = require("child_process");
 const path = require("path");
 const os = require("os");
 
-const binaryName = os.platform() === "win32" ? "qg.exe" : "qg";
+const binaryName = os.platform() === "win32" ? "crivo.exe" : "crivo";
 const binaryPath = path.join(__dirname, binaryName);
 
 try {
@@ -14,8 +14,8 @@ try {
   if (err.status !== undefined) {
     process.exit(err.status);
   }
-  console.error(`Failed to run quality-gate: ${err.message}`);
+  console.error(`Failed to run crivo: ${err.message}`);
   console.error(`Expected binary at: ${binaryPath}`);
-  console.error(`Run: npm rebuild quality-gate`);
+  console.error(`Run: npm rebuild crivo`);
   process.exit(1);
 }

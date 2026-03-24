@@ -24,7 +24,7 @@ COMMAND="${1:-summary}"
 JSON="${2:-qg-reports/output.json}"
 
 if [ ! -f "$JSON" ]; then
-  echo "Error: $JSON not found. Run 'qg run --json > $JSON' first." >&2
+  echo "Error: $JSON not found. Run 'crivo run --json > $JSON' first." >&2
   exit 1
 fi
 

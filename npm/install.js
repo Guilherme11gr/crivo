@@ -36,20 +36,19 @@ function getPlatform() {
 }
 
 function getBinaryName(platform) {
-  return platform === "windows" ? "qg.exe" : "qg";
+  return platform === "windows" ? "crivo.exe" : "crivo";
 }
 
 function getDownloadUrl(platform, arch) {
   const ext = platform === "windows" ? ".zip" : ".tar.gz";
-  // Matches goreleaser name_template: quality-gate_<os>_<arch>
-  return `https://github.com/${REPO}/releases/download/v${VERSION}/quality-gate_${platform}_${arch}${ext}`;
+  return `https://github.com/${REPO}/releases/download/v${VERSION}/crivo_${platform}_${arch}${ext}`;
 }
 
 function fetch(url) {
   return new Promise((resolve, reject) => {
     const mod = url.startsWith("https") ? https : http;
     mod
-      .get(url, { headers: { "User-Agent": "quality-gate-npm" } }, (res) => {
+      .get(url, { headers: { "User-Agent": "crivo-npm" } }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           return fetch(res.headers.location).then(resolve, reject);
         }
@@ -66,8 +65,7 @@ function fetch(url) {
 }
 
 async function extractTarGz(buffer, destDir, binaryName) {
-  // Use tar command (available on macOS/Linux)
-  const tmpFile = path.join(os.tmpdir(), `qg-${Date.now()}.tar.gz`);
+  const tmpFile = path.join(os.tmpdir(), `crivo-${Date.now()}.tar.gz`);
   fs.writeFileSync(tmpFile, buffer);
   try {
     execSync(`tar xzf "${tmpFile}" -C "${destDir}" ${binaryName}`, { stdio: "pipe" });
@@ -77,9 +75,8 @@ async function extractTarGz(buffer, destDir, binaryName) {
 }
 
 async function extractZip(buffer, destDir, binaryName) {
-  // Use PowerShell on Windows
-  const tmpFile = path.join(os.tmpdir(), `qg-${Date.now()}.zip`);
-  const tmpExtract = path.join(os.tmpdir(), `qg-extract-${Date.now()}`);
+  const tmpFile = path.join(os.tmpdir(), `crivo-${Date.now()}.zip`);
+  const tmpExtract = path.join(os.tmpdir(), `crivo-extract-${Date.now()}`);
   fs.writeFileSync(tmpFile, buffer);
   try {
     fs.mkdirSync(tmpExtract, { recursive: true });
@@ -99,12 +96,11 @@ async function extractZip(buffer, destDir, binaryName) {
 async function tryGoInstall() {
   console.log("  Trying go install as fallback...");
   try {
-    execSync(`go install github.com/${REPO}/cmd/qg@v${VERSION}`, {
+    execSync(`go install github.com/${REPO}/cmd/crivo@v${VERSION}`, {
       stdio: "inherit",
     });
-    // Find where go installed it
     const gopath = execSync("go env GOPATH", { encoding: "utf8" }).trim();
-    const binaryName = os.platform() === "win32" ? "qg.exe" : "qg";
+    const binaryName = os.platform() === "win32" ? "crivo.exe" : "crivo";
     const src = path.join(gopath, "bin", binaryName);
     if (fs.existsSync(src)) {
       const binDir = path.join(__dirname, "bin");
@@ -127,14 +123,14 @@ async function main() {
 
   // Skip if binary already exists
   if (fs.existsSync(destPath)) {
-    console.log(`  quality-gate binary already exists`);
+    console.log(`  crivo binary already exists`);
     return;
   }
 
   fs.mkdirSync(binDir, { recursive: true });
 
   const url = getDownloadUrl(platform, arch);
-  console.log(`  Downloading quality-gate v${VERSION} for ${platform}/${arch}...`);
+  console.log(`  Downloading crivo v${VERSION} for ${platform}/${arch}...`);
 
   try {
     const buffer = await fetch(url);
@@ -146,7 +142,7 @@ async function main() {
     }
 
     fs.chmodSync(destPath, 0o755);
-    console.log(`  Installed quality-gate to ${destPath}`);
+    console.log(`  Installed crivo to ${destPath}`);
   } catch (err) {
     console.warn(`  GitHub release not found: ${err.message}`);
 
@@ -156,8 +152,8 @@ async function main() {
     }
 
     console.error(
-      `  Failed to install quality-gate.\n` +
-        `  Install manually: go install github.com/${REPO}/cmd/qg@latest\n` +
+      `  Failed to install crivo.\n` +
+        `  Install manually: go install github.com/${REPO}/cmd/crivo@latest\n` +
         `  Or download from: https://github.com/${REPO}/releases`
     );
     process.exit(1);

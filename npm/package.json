@@ -18,7 +18,7 @@
     "url": "https://github.com/guilherme11gr/crivo"
   },
   "bin": {
-    "qg": "bin/qg.js"
+    "crivo": "bin/crivo.js"
   },
   "scripts": {
     "postinstall": "node install.js"

@@ -1,30 +1,30 @@
-# quality-gate
+# crivo
 
 Lightweight, open-source alternative to SonarQube. Single binary that orchestrates existing OSS tools (tsc, eslint, jest, jscpd, semgrep, gitleaks), calculates A-E ratings, and enforces quality gates.
 
 ## Install
 
 ```bash
-npm install -g quality-gate
+npm install -g crivo
 ```
 
 ## Quick Start
 
 ```bash
 # Initialize in your project
-qg init
+crivo init
 
 # Run all checks
-qg run
+crivo run
 
 # JSON output (for CI/AI agents)
-qg run --json
+crivo run --json
 
 # Only changed code (for PRs)
-qg run --new-code
+crivo run --new-code
 
 # Save baseline for trend tracking
-qg run --save
+crivo run --save
 ```
 
 ## What it checks
@@ -34,11 +34,11 @@ qg run --save
 | Type Safety | tsc | TypeScript compilation errors |
 | Code Quality | eslint | Lint errors and warnings |
 | Coverage | jest/vitest | Line, branch, function coverage |
-| Duplication | jscpd | Copy-paste detection |
+| Duplication | jscpd + semantic | Copy-paste + structural clone detection |
 | Secrets | gitleaks | Leaked credentials |
 | Complexity | custom AST | Cognitive complexity per function |
 | Dead Code | knip | Unused exports and files |
-| Security | semgrep | SAST vulnerability patterns |
+| Security | semgrep | SAST vulnerability patterns (auto-installed) |
 
 ## Output Formats
 

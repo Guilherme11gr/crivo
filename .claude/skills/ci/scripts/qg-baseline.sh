@@ -23,16 +23,16 @@ echo "  Branch: $BRANCH"
 echo ""
 
 # Run full analysis and save
-qg run --save --verbose 2>&1 | tail -30
+crivo run --save --verbose 2>&1 | tail -30
 
 echo ""
 echo "Baseline updated in .qualitygate/history.db"
 
 # Show what was captured
-if command -v qg &>/dev/null; then
+if command -v crivo &>/dev/null; then
   echo ""
   echo "=== Trend ==="
-  qg trends 2>/dev/null || echo "  (first data point — trends available after 2+ runs)"
+  crivo trends 2>/dev/null || echo "  (first data point — trends available after 2+ runs)"
 fi
 
 # Optionally commit the baseline

@@ -1,11 +1,11 @@
 version: 2
 
-project_name: quality-gate
+project_name: crivo
 
 builds:
-  - id: qg
-    main: ./cmd/qg/
-    binary: qg
+  - id: crivo
+    main: ./cmd/crivo/
+    binary: crivo
     env:
       - CGO_ENABLED=0
     goos:
@@ -40,23 +40,23 @@ changelog:
       - "^chore:"
 
 brews:
-  - name: quality-gate
+  - name: crivo
     repository:
-      owner: anthropics
+      owner: guilherme11gr
       name: homebrew-tap
     description: "Lightweight quality gate for code analysis — open source SonarQube alternative"
     homepage: "https://github.com/guilherme11gr/crivo"
     license: "MIT"
     install: |
-      bin.install "qg"
+      bin.install "crivo"
     test: |
-      system "#{bin}/qg", "version"
+      system "#{bin}/crivo", "version"
 
 nfpms:
   - id: default
-    package_name: quality-gate
+    package_name: crivo
     description: "Lightweight quality gate for code analysis"
-    maintainer: "Quality Gate Team"
+    maintainer: "Guilherme Revoredo"
     license: MIT
     formats:
       - deb

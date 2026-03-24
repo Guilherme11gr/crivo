@@ -36,7 +36,7 @@ const helpText = `
   quality-gate — Lightweight quality gate for code analysis
 
   Usage:
-    qg [command] [options]
+    crivo [command] [options]
 
   Commands:
     run         Run quality gate checks (default)
@@ -403,7 +403,7 @@ func runTrends() {
 
 	points, err := s.GetTrend(projectDir, 20)
 	if err != nil || len(points) == 0 {
-		fmt.Println("  No trend data available yet. Run `qg run --save` a few times first.")
+		fmt.Println("  No trend data available yet. Run `crivo run --save` a few times first.")
 		return
 	}
 
@@ -505,9 +505,9 @@ jobs:
         with:
           go-version: '1.22'
       - name: Install quality-gate
-        run: go install github.com/guilherme11gr/crivo/cmd/qg@latest
+        run: go install github.com/guilherme11gr/crivo/cmd/crivo@latest
       - name: Run Quality Gate
-        run: qg run --md quality-gate-report.md --sarif quality-gate.sarif --save
+        run: crivo run --md quality-gate-report.md --sarif quality-gate.sarif --save
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
@@ -533,7 +533,7 @@ jobs:
 	fmt.Println()
 	fmt.Println(color("  Done! Next steps:", bold))
 	fmt.Println(color("  1. Review .qualitygate.yaml and adjust thresholds", dim))
-	fmt.Println(color("  2. Run: qg run", dim))
+	fmt.Println(color("  2. Run: crivo run", dim))
 	fmt.Println(color("  3. Commit the config and workflow files", dim))
 	fmt.Println()
 }

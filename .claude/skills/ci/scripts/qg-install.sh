@@ -35,9 +35,9 @@ if [ "$VERSION" = "latest" ]; then
       echo "Install Go (https://go.dev) or create a release first."
       exit 1
     fi
-    echo "Building from source: go install github.com/$REPO/cmd/qg@latest"
-    go install "github.com/$REPO/cmd/qg@latest"
-    echo "Installed qg to $(go env GOPATH)/bin/qg"
+    echo "Building from source: go install github.com/$REPO/cmd/crivo@latest"
+    go install "github.com/$REPO/cmd/crivo@latest"
+    echo "Installed crivo to $(go env GOPATH)/bin/crivo"
     exit 0
   fi
   echo "Latest version: $VERSION"
@@ -89,9 +89,9 @@ fi
 
 # Install
 if [ -w "$INSTALL_DIR" ]; then
-  mv qg "$INSTALL_DIR/"
+  mv crivo "$INSTALL_DIR/"
 else
-  sudo mv qg "$INSTALL_DIR/"
+  sudo mv crivo "$INSTALL_DIR/"
 fi
 
-echo "Installed qg $(qg version) to $INSTALL_DIR/qg"
+echo "Installed crivo $(crivo version) to $INSTALL_DIR/crivo"
