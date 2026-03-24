@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# qg-install.sh — Portable quality-gate installer for CI
-# Usage: ./qg-install.sh [version]
-# Example: ./qg-install.sh          # latest
-#          ./qg-install.sh v0.2.0   # specific version
+# crivo-install.sh — Portable quality-gate installer for CI
+# Usage: ./crivo-install.sh [version]
+# Example: ./crivo-install.sh          # latest
+#          ./crivo-install.sh v0.2.0   # specific version
 set -euo pipefail
 
 VERSION="${1:-latest}"
 REPO="guilherme11gr/crivo"
-INSTALL_DIR="${QG_INSTALL_DIR:-/usr/local/bin}"
+INSTALL_DIR="${CRIVO_INSTALL_DIR:-/usr/local/bin}"
 
 # Detect OS and architecture
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"

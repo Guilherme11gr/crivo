@@ -8,15 +8,11 @@ dist/
 # Go
 /crivo.exe
 /crivo
-/qg.exe
-/qg
 /bin/
 
 # npm package — keep launcher script, ignore downloaded binaries
 npm/bin/crivo.exe
 npm/bin/crivo.cmd
-npm/bin/qg.exe
-npm/bin/qg.cmd
 
 # Store
 .qualitygate/

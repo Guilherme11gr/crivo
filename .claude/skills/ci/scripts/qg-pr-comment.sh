@@ -1,22 +1,22 @@
 #!/usr/bin/env bash
-# qg-pr-comment.sh — Post quality gate results as a PR comment
+# crivo-pr-comment.sh — Post quality gate results as a PR comment
 # Works with GitHub CLI (gh), GitLab API, or outputs for other platforms.
 #
-# Usage: ./qg-pr-comment.sh [report.md]
+# Usage: ./crivo-pr-comment.sh [report.md]
 #
 # Environment variables:
-#   QG_REPORT_PATH  - Path to markdown report (default: qg-reports/report.md)
-#   QG_JSON_PATH    - Path to JSON output (default: qg-reports/output.json)
-#   QG_CI_PLATFORM  - "github", "gitlab", or "stdout" (default: auto-detect)
-#   QG_PR_NUMBER    - PR number (default: auto-detect)
-#   QG_COMMENT_TAG  - Unique tag for sticky comments (default: "quality-gate")
+#   CRIVO_REPORT_PATH  - Path to markdown report (default: crivo-reports/report.md)
+#   CRIVO_JSON_PATH    - Path to JSON output (default: crivo-reports/output.json)
+#   CRIVO_CI_PLATFORM  - "github", "gitlab", or "stdout" (default: auto-detect)
+#   CRIVO_PR_NUMBER    - PR number (default: auto-detect)
+#   CRIVO_COMMENT_TAG  - Unique tag for sticky comments (default: "quality-gate")
 set -euo pipefail
 
-REPORT="${1:-${QG_REPORT_PATH:-qg-reports/report.md}}"
-JSON="${QG_JSON_PATH:-qg-reports/output.json}"
-PLATFORM="${QG_CI_PLATFORM:-}"
-PR_NUMBER="${QG_PR_NUMBER:-}"
-TAG="${QG_COMMENT_TAG:-quality-gate}"
+REPORT="${1:-${CRIVO_REPORT_PATH:-crivo-reports/report.md}}"
+JSON="${CRIVO_JSON_PATH:-crivo-reports/output.json}"
+PLATFORM="${CRIVO_CI_PLATFORM:-}"
+PR_NUMBER="${CRIVO_PR_NUMBER:-}"
+TAG="${CRIVO_COMMENT_TAG:-quality-gate}"
 
 # ---------------------------------------------------------------------------
 # Auto-detect platform

@@ -8,11 +8,11 @@ argument-hint: [scan|add|show|remove]
 
 # Custom Rules Skill
 
-You generate `custom-rules` entries for `.qualitygate.yaml` by reading project documentation, guidelines, and source code conventions. The goal is to turn human-readable rules into machine-enforceable regex checks that quality-gate (`qg`) validates on every run.
+You generate `custom-rules` entries for `.qualitygate.yaml` by reading project documentation, guidelines, and source code conventions. The goal is to turn human-readable rules into machine-enforceable regex checks that quality-gate (`crivo`) validates on every run.
 
 ## How custom-rules work
 
-Custom rules are defined in `.qualitygate.yaml` under the `custom-rules:` key. Rules run during `qg run` — most are regex-based, but `semgrep` rules use AST-based semantic matching. There are 8 rule types:
+Custom rules are defined in `.qualitygate.yaml` under the `custom-rules:` key. Rules run during `crivo run` — most are regex-based, but `semgrep` rules use AST-based semantic matching. There are 8 rule types:
 
 ### Rule types reference
 
@@ -102,7 +102,7 @@ Discover project guidelines and generate custom rules automatically.
 
 7. **Write/update `.qualitygate.yaml`** — append to existing `custom-rules:` or create the section
 
-8. **Verify** — run `qg run --verbose` to confirm rules are detected and working
+8. **Verify** — run `crivo run --verbose` to confirm rules are detected and working
 
 ### `add`
 
@@ -112,7 +112,7 @@ Add a specific custom rule interactively.
 2. Determine the best rule type
 3. Ask for severity and any exceptions (`allow-in`)
 4. Write the rule to `.qualitygate.yaml`
-5. Run `qg run --verbose` to verify
+5. Run `crivo run --verbose` to verify
 
 ### `show`
 
@@ -271,19 +271,19 @@ custom-rules:
 
 ---
 
-## Integration with qg run
+## Integration with crivo run
 
 After writing rules, always verify:
 
 ```bash
 # Build latest binary (if in quality-gate repo)
-go build -o qg.exe ./cmd/qg/
+go build -o crivo.exe ./cmd/crivo/
 
 # Run with verbose to see custom rules detection
-qg run --verbose
+crivo run --verbose
 
 # JSON output for programmatic verification
-qg run --json | jq '.checks[] | select(.id == "custom-rules")'
+crivo run --json | jq '.checks[] | select(.id == "custom-rules")'
 ```
 
 The custom-rules check will appear as a separate check in the output alongside typescript, eslint, etc.

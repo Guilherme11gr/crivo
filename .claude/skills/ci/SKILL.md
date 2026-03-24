@@ -110,33 +110,33 @@ jobs:
         run: |
           crivo run \
             --new-code \
-            --json > qg-output.json \
-            --md qg-report.md \
-            --sarif qg-report.sarif \
+            --json > crivo-output.json \
+            --md crivo-report.md \
+            --sarif crivo-report.sarif \
             --save
         continue-on-error: true
-        id: qg
+        id: crivo
 
       - name: Run Quality Gate (Push to main)
         if: github.event_name == 'push'
-        run: crivo run --save --sarif qg-report.sarif
+        run: crivo run --save --sarif crivo-report.sarif
 
       - name: Upload SARIF
-        if: always() && hashFiles('qg-report.sarif') != ''
+        if: always() && hashFiles('crivo-report.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: qg-report.sarif
+          sarif_file: crivo-report.sarif
 
       - name: Comment PR
         if: github.event_name == 'pull_request' && always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          path: qg-report.md
+          path: crivo-report.md
 
       - name: Gate Decision
         if: github.event_name == 'pull_request'
         run: |
-          if [ "${{ steps.qg.outcome }}" = "failure" ]; then
+          if [ "${{ steps.crivo.outcome }}" = "failure" ]; then
             echo "::error::Quality Gate FAILED — see PR comment for details"
             exit 1
           fi
@@ -155,12 +155,12 @@ quality-gate:
     - mv crivo /usr/local/bin/
     - npm ci
   script:
-    - crivo run --new-code --md qg-report.md --sarif qg-report.sarif --save
+    - crivo run --new-code --md crivo-report.md --sarif crivo-report.sarif --save
   artifacts:
     reports:
-      sast: qg-report.sarif
+      sast: crivo-report.sarif
     paths:
-      - qg-report.md
+      - crivo-report.md
     when: always
   rules:
     - if: $CI_MERGE_REQUEST_IID
@@ -177,7 +177,7 @@ curl -fsSL https://github.com/guilherme11gr/crivo/releases/latest/download/quali
 export PATH=$PWD:$PATH
 
 # Run
-crivo run --new-code --json > qg-output.json --md qg-report.md --save
+crivo run --new-code --json > crivo-output.json --md crivo-report.md --save
 ```
 
 ---
@@ -186,19 +186,19 @@ crivo run --new-code --json > qg-output.json --md qg-report.md --save
 
 The following scripts live in `${CLAUDE_SKILL_DIR}/scripts/` and should be copied to the user's project at `scripts/ci/` when setting up CI.
 
-### `scripts/ci/qg-install.sh`
+### `scripts/ci/crivo-install.sh`
 Portable installer that works on Linux/macOS, detects arch, verifies checksum.
 
-### `scripts/ci/qg-gate.sh`
+### `scripts/ci/crivo-gate.sh`
 Runs the quality gate with smart defaults based on context (PR vs push, new-code vs full).
 
-### `scripts/ci/qg-baseline.sh`
+### `scripts/ci/crivo-baseline.sh`
 Updates the baseline database — run on main branch merges only.
 
-### `scripts/ci/qg-pr-comment.sh`
+### `scripts/ci/crivo-pr-comment.sh`
 Generates and posts a PR comment from the markdown report.
 
-### `scripts/ci/qg-parse-json.sh`
+### `scripts/ci/crivo-parse-json.sh`
 Parses the JSON output and extracts key metrics for custom integrations.
 
 When setting up CI, copy these scripts with:
@@ -356,11 +356,11 @@ The JSON output (`--json`) has this structure — teach agents to parse it:
 
 ```bash
 # Run crivo, capture JSON, send to agent
-crivo run --json > qg-output.json
+crivo run --json > crivo-output.json
 
 # Example: ask Claude to fix the top issues
-cat qg-output.json | claude "Fix the top 5 most critical issues from this quality gate report"
+cat crivo-output.json | claude "Fix the top 5 most critical issues from this quality gate report"
 
 # Example: extract just failing checks
-jq '.checks[] | select(.status == "failed") | {name, summary, issues: [.issues[:3][]]}' qg-output.json
+jq '.checks[] | select(.status == "failed") | {name, summary, issues: [.issues[:3][]]}' crivo-output.json
 ```

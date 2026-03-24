@@ -314,7 +314,7 @@ func (m Model) renderTrends() string {
 
 	if len(m.trendPoints) < 2 {
 		sections = append(sections, lipgloss.NewStyle().Foreground(muted).Render(
-			"  Not enough data yet. Run `qg run --save` a few more times."))
+			"  Not enough data yet. Run `crivo run --save` a few more times."))
 		sections = append(sections, "")
 		sections = append(sections, lipgloss.NewStyle().Foreground(muted).Render(
 			fmt.Sprintf("  Currently: %d data point(s)", len(m.trendPoints))))

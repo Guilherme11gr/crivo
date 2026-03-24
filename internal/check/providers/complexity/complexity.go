@@ -98,7 +98,7 @@ func (p *Provider) analyzeAST(ctx context.Context, projectDir string, cfg *confi
 	}
 
 	// Write embedded script to temp
-	tmpDir, err := os.MkdirTemp("", "qg-complexity-*")
+	tmpDir, err := os.MkdirTemp("", "crivo-complexity-*")
 	if err != nil {
 		return nil, err
 	}

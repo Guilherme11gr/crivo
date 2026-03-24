@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# qg-parse-json.sh — Extract metrics from quality gate JSON output
+# crivo-parse-json.sh — Extract metrics from quality gate JSON output
 # Useful for custom dashboards, Slack notifications, or agent pipelines.
 #
-# Usage: ./qg-parse-json.sh <command> [json-file]
+# Usage: ./crivo-parse-json.sh <command> [json-file]
 #
 # Commands:
 #   summary      - One-line summary (for Slack/notifications)
@@ -14,14 +14,14 @@
 #   for-agent    - Compact format optimized for AI agent consumption
 #
 # Examples:
-#   ./qg-parse-json.sh summary qg-reports/output.json
-#   ./qg-parse-json.sh metrics | grep coverage
-#   ./qg-parse-json.sh issues | head -10
-#   ./qg-parse-json.sh for-agent | claude "Fix these issues"
+#   ./crivo-parse-json.sh summary crivo-reports/output.json
+#   ./crivo-parse-json.sh metrics | grep coverage
+#   ./crivo-parse-json.sh issues | head -10
+#   ./crivo-parse-json.sh for-agent | claude "Fix these issues"
 set -euo pipefail
 
 COMMAND="${1:-summary}"
-JSON="${2:-qg-reports/output.json}"
+JSON="${2:-crivo-reports/output.json}"
 
 if [ ! -f "$JSON" ]; then
   echo "Error: $JSON not found. Run 'crivo run --json > $JSON' first." >&2

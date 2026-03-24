@@ -194,7 +194,7 @@ internal/check/providers/customrules/
 
 4. **Instrui o CLI** — mostra ao agente como validar:
    ```bash
-   qg run --verbose  # roda com as novas regras
+   crivo run --verbose  # roda com as novas regras
    ```
 
 ### Frontmatter da skill
@@ -217,7 +217,7 @@ argument-hint: [generate|list|validate]
 
 - **`generate`** (default) — escaneia docs, gera/atualiza `custom-rules` no `.qualitygate.yaml`
 - **`list`** — mostra regras existentes no config e status (quantos matches cada uma tem)
-- **`validate`** — roda `qg run` e mostra quais custom rules passaram/falharam
+- **`validate`** — roda `crivo run` e mostra quais custom rules passaram/falharam
 
 ---
 
@@ -241,7 +241,7 @@ Skill:
        severity: blocker
      ...
 6. Escreve no .qualitygate.yaml
-7. Roda: qg run --verbose
+7. Roda: crivo run --verbose
 8. Output: "Custom Rules: 3 rules checked, 0 violations → PASS"
 ```
 

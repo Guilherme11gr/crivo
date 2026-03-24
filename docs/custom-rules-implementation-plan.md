@@ -12,7 +12,7 @@
 | `internal/check/providers/customrules/matcher.go` | **NOVO** — 5 matchers (ban-import, ban-pattern, require-import, enforce-pattern, ban-dependency) |
 | `internal/check/providers/customrules/customrules.go` | **NOVO** — Provider (Name, ID, Detect, Analyze) |
 | `internal/check/providers/customrules/customrules_test.go` | **NOVO** — Testes completos |
-| `cmd/qg/main.go` | Import + register `customrules.New(cfg)` |
+| `cmd/crivo/main.go` | Import + register `customrules.New(cfg)` |
 
 ---
 
@@ -155,7 +155,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 
 **Otimização:** ler cada arquivo uma única vez, aplicar todas as regras de uma vez.
 
-### Fase 6: Registration (`cmd/qg/main.go`)
+### Fase 6: Registration (`cmd/crivo/main.go`)
 
 ```go
 import "github.com/guilherme11gr/crivo/internal/check/providers/customrules"

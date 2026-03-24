@@ -122,10 +122,10 @@ test-existence:
 
 ## Ideias de UX/CLI (vindas da análise do tla-precheck)
 
-### `qg doctor`
+### `crivo doctor`
 Verifica quais ferramentas externas estão instaladas e funcionando (tsc, eslint, jest, jscpd, semgrep, gitleaks, knip). Mostra versões e quais checks vão funcionar.
 
-### `qg init` melhorado
+### `crivo init` melhorado
 Detecta ferramentas instaladas e já configura `.qualitygate.yaml` com checks habilitados apenas para o que existe. Sugere instalação do que falta.
 
 ### Estimativa pré-execução
@@ -143,5 +143,5 @@ Antes de rodar, mostra: "5 checks habilitados, ~2300 arquivos, estimativa ~15s".
 | 🟡 P1 | Dependency Audit | médio prazo | sim (vulns) |
 | 🟢 P2 | Test Existence | médio prazo | não (warning) |
 | 🟢 P2 | Import Consistency | longo prazo | não (warning) |
-| 🔵 DX | `qg doctor` | UX | n/a |
-| 🔵 DX | `qg init` melhorado | UX | n/a |
+| 🔵 DX | `crivo doctor` | UX | n/a |
+| 🔵 DX | `crivo init` melhorado | UX | n/a |
