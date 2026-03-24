@@ -20,3 +20,6 @@ npm/bin/qg.cmd
 # IDE
 .idea/
 .vscode/
+
+# Claude settings (may contain tokens)
+.claude/settings.json
