@@ -550,6 +550,66 @@ function checkPayload(info: any): ValidationResult {
 }
 
 // ---------------------------------------------------------------------------
+// Semantic-exclude glob filtering
+// ---------------------------------------------------------------------------
+
+func TestMatchesAnyGlob(t *testing.T) {
+	tests := []struct {
+		path     string
+		patterns []string
+		want     bool
+	}{
+		{"src/app/layout.tsx", []string{"**/layout.tsx"}, true},
+		{"src/app/admin/layout.tsx", []string{"**/layout.tsx"}, true},
+		{"src/app/page.tsx", []string{"**/page.tsx"}, true},
+		{"src/app/page.tsx", []string{"**/layout.tsx"}, false},
+		{"src/components/UserSkeleton.tsx", []string{"**/*Skeleton*"}, true},
+		{"src/utils/helpers.ts", []string{"**/layout.tsx", "**/page.tsx"}, false},
+		{"src/app/loading.tsx", []string{"**/loading.tsx"}, true},
+		{"layout.tsx", []string{"**/layout.tsx"}, true},
+	}
+
+	for _, tt := range tests {
+		got := matchesAnyGlob(tt.path, tt.patterns)
+		if got != tt.want {
+			t.Errorf("matchesAnyGlob(%q, %v) = %v, want %v", tt.path, tt.patterns, got, tt.want)
+		}
+	}
+}
+
+func TestFindSemanticClones_SemanticExclude(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(filepath.Join(srcDir, "app"), 0755)
+	os.MkdirAll(filepath.Join(srcDir, "app", "admin"), 0755)
+
+	// Two layout files with same structure — should be excluded
+	layout := `
+function RootLayout(children: any) {
+  const session = await getServerSession();
+  if (!session) {
+    return redirect("/login");
+  }
+  return renderLayout(children, session);
+}
+`
+	os.WriteFile(filepath.Join(srcDir, "app", "layout.tsx"), []byte(layout), 0644)
+	os.WriteFile(filepath.Join(srcDir, "app", "admin", "layout.tsx"), []byte(layout), 0644)
+
+	// Without exclude: should find clones
+	clones := findSemanticClones(dir, []string{"src/"}, nil, 3, 0.85)
+	if len(clones) == 0 {
+		t.Fatal("expected clones without exclusion")
+	}
+
+	// With exclude: should NOT find clones
+	clones = findSemanticClones(dir, []string{"src/"}, nil, 3, 0.85, []string{"**/layout.tsx"})
+	if len(clones) > 0 {
+		t.Error("semantic-exclude should filter out layout.tsx files")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Regression: Python functions
 // ---------------------------------------------------------------------------
 

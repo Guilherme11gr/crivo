@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 	"gopkg.in/yaml.v3"
@@ -289,15 +290,26 @@ type semgrepResultJSON struct {
 // semgrepAvailable caches the result of checking for semgrep binary
 var semgrepAvailable *bool
 
-// isSemgrepAvailable checks if semgrep is installed
+// isSemgrepAvailable checks if semgrep is installed (uses auto-install cache)
 func isSemgrepAvailable() bool {
 	if semgrepAvailable != nil {
 		return *semgrepAvailable
 	}
-	_, err := exec.LookPath("semgrep")
-	avail := err == nil
+	avail := check.FindTool("semgrep") != ""
 	semgrepAvailable = &avail
 	return avail
+}
+
+// findSemgrepBin returns the semgrep binary path, trying auto-install if needed.
+func findSemgrepBin() string {
+	if p := check.FindTool("semgrep"); p != "" {
+		return p
+	}
+	// Try auto-install
+	if p, err := check.EnsureTool("semgrep"); err == nil {
+		return p
+	}
+	return "semgrep" // fallback to PATH lookup
 }
 
 // hasAdvancedSemgrepOptions returns true if the rule uses pattern-not, pattern-inside, etc.
@@ -394,7 +406,7 @@ func matchSemgrep(ctx context.Context, rule CompiledRule, projectDir string, fil
 		args = append(args, filepath.Join(projectDir, f))
 	}
 
-	cmd := exec.CommandContext(ctx, "semgrep", args...)
+	cmd := exec.CommandContext(ctx, findSemgrepBin(), args...)
 	cmd.Dir = projectDir
 
 	var stdout, stderr bytes.Buffer
@@ -574,7 +586,7 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 			args = append(args, filepath.Join(projectDir, f))
 		}
 
-		cmd := exec.CommandContext(ctx, "semgrep", args...)
+		cmd := exec.CommandContext(ctx, findSemgrepBin(), args...)
 		cmd.Dir = projectDir
 
 		var stdout, stderr bytes.Buffer

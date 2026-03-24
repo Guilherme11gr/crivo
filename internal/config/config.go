@@ -71,9 +71,10 @@ type DuplicationConfig struct {
 	MinTokens int     `yaml:"min-tokens" json:"minTokens"`
 
 	// Semantic duplication detection (built-in, no external tool needed)
-	Semantic              bool    `yaml:"semantic" json:"semantic"`                             // enable semantic clone detection
-	SemanticMinLines      int     `yaml:"semantic-min-lines" json:"semanticMinLines"`           // min function body lines (default: 5)
-	SimilarityThreshold   float64 `yaml:"similarity-threshold" json:"similarityThreshold"`     // 0.0-1.0, below 1.0 enables fuzzy matching (default: 0.85)
+	Semantic              bool     `yaml:"semantic" json:"semantic"`                             // enable semantic clone detection
+	SemanticMinLines      int      `yaml:"semantic-min-lines" json:"semanticMinLines"`           // min function body lines (default: 5)
+	SimilarityThreshold   float64  `yaml:"similarity-threshold" json:"similarityThreshold"`     // 0.0-1.0, below 1.0 enables fuzzy matching (default: 0.85)
+	SemanticExclude       []string `yaml:"semantic-exclude" json:"semanticExclude"`             // glob patterns to exclude from semantic analysis (e.g. "**/layout.tsx")
 }
 
 type ComplexityConfig struct {

@@ -339,9 +339,42 @@ var sourceExtensions = map[string]bool{
 	".go": true, ".py": true,
 }
 
+// matchesAnyGlob checks if a path matches any of the given glob patterns.
+func matchesAnyGlob(path string, patterns []string) bool {
+	normalized := filepath.ToSlash(path)
+	for _, pattern := range patterns {
+		pattern = filepath.ToSlash(pattern)
+		// Try matching the full path
+		if matched, _ := filepath.Match(pattern, normalized); matched {
+			return true
+		}
+		// Try matching just the filename (for patterns like "*.tsx")
+		if matched, _ := filepath.Match(pattern, filepath.Base(normalized)); matched {
+			return true
+		}
+		// Try matching with ** prefix (for patterns like "**/layout.tsx")
+		if strings.HasPrefix(pattern, "**/") {
+			suffix := pattern[3:]
+			if strings.HasSuffix(normalized, "/"+suffix) || normalized == suffix {
+				return true
+			}
+			if matched, _ := filepath.Match(suffix, filepath.Base(normalized)); matched {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // findSemanticClones walks source files, extracts functions, normalizes them,
 // and finds semantic duplicates using exact hash matching and fuzzy trigram similarity.
-func findSemanticClones(projectDir string, srcDirs []string, exclude []string, minLines int, similarityThreshold float64) []SemanticClone {
+// semanticExclude contains glob patterns for files to skip (e.g. "**/layout.tsx").
+func findSemanticClones(projectDir string, srcDirs []string, exclude []string, minLines int, similarityThreshold float64, semanticExclude ...[]string) []SemanticClone {
+	var excludePatterns []string
+	if len(semanticExclude) > 0 {
+		excludePatterns = semanticExclude[0]
+	}
+
 	var allFunctions []FunctionInfo
 
 	for _, srcDir := range srcDirs {
@@ -363,6 +396,12 @@ func findSemanticClones(projectDir string, srcDirs []string, exclude []string, m
 			base := filepath.Base(path)
 			if strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") ||
 				strings.Contains(base, "_test.") || strings.HasSuffix(base, "_test.go") {
+				return nil
+			}
+
+			// Apply semantic-exclude patterns
+			relPath, _ := filepath.Rel(projectDir, path)
+			if len(excludePatterns) > 0 && matchesAnyGlob(relPath, excludePatterns) {
 				return nil
 			}
 

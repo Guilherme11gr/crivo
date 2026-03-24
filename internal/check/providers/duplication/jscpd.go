@@ -229,7 +229,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 			simThreshold = 0.85
 		}
 
-		clones := findSemanticClones(projectDir, srcDirs, cfg.Exclude, minFuncLines, simThreshold)
+		clones := findSemanticClones(projectDir, srcDirs, cfg.Exclude, minFuncLines, simThreshold, cfg.Duplication.SemanticExclude)
 		semanticCloneCount = len(clones)
 
 		for i, clone := range clones {

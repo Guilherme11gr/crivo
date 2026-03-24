@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
@@ -52,12 +54,24 @@ func (p *Provider) Name() string { return "Security (Semgrep)" }
 func (p *Provider) ID() string   { return "semgrep" }
 
 func (p *Provider) Detect(_ context.Context, _ string) bool {
-	_, err := exec.LookPath("semgrep")
-	return err == nil
+	return check.FindTool("semgrep") != ""
 }
 
 func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.Config) (*domain.CheckResult, error) {
 	start := time.Now()
+
+	// Auto-install semgrep if not available
+	semgrepBin, err := check.EnsureTool("semgrep")
+	if err != nil {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusSkipped,
+			Summary:  fmt.Sprintf("semgrep not available: %v", err),
+			Duration: time.Since(start),
+			Details:  []string{"Install manually: pip install semgrep"},
+		}, nil
+	}
 
 	args := []string{
 		"scan",
@@ -78,7 +92,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		args = append(args, ".")
 	}
 
-	cmd := exec.CommandContext(ctx, "semgrep", args...)
+	cmd := exec.CommandContext(ctx, semgrepBin, args...)
 	cmd.Dir = projectDir
 
 	var stdout, stderr bytes.Buffer
@@ -90,16 +104,6 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 
 	output := stdout.Bytes()
 	if len(output) == 0 {
-		errMsg := stderr.String()
-		if strings.Contains(errMsg, "command not found") || strings.Contains(errMsg, "not recognized") {
-			return &domain.CheckResult{
-				Name:     p.Name(),
-				ID:       p.ID(),
-				Status:   domain.StatusSkipped,
-				Summary:  "semgrep not installed",
-				Duration: duration,
-			}, nil
-		}
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),
