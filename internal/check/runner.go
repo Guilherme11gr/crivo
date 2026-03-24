@@ -169,6 +169,8 @@ func isCheckEnabled(id string, cfg *config.Config, disabledChecks map[string]boo
 		return cfg.Checks.Secrets
 	case "dead-code":
 		return cfg.Checks.DeadCode
+	case "custom-rules":
+		return cfg.Checks.CustomRules
 	default:
 		return true
 	}

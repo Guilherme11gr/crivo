@@ -14,6 +14,7 @@ import (
 	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/check/providers/complexity"
 	"github.com/guilherme11gr/crivo/internal/check/providers/coverage"
+	"github.com/guilherme11gr/crivo/internal/check/providers/customrules"
 	"github.com/guilherme11gr/crivo/internal/check/providers/deadcode"
 	"github.com/guilherme11gr/crivo/internal/check/providers/duplication"
 	"github.com/guilherme11gr/crivo/internal/check/providers/eslint"
@@ -205,6 +206,7 @@ func runAnalysis(opts options) int {
 	registry.Register(semgrep.New())
 	registry.Register(secrets.New())
 	registry.Register(deadcode.New())
+	registry.Register(customrules.New())
 
 	// Detect git info
 	branch := ""

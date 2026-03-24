@@ -42,6 +42,7 @@ func applyStrict(cfg *Config) {
 	cfg.Checks.Semgrep = true
 	cfg.Checks.Secrets = true
 	cfg.Checks.DeadCode = true
+	cfg.Checks.CustomRules = true
 }
 
 func applyBalanced(cfg *Config) {

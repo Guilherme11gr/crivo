@@ -31,6 +31,7 @@ type Config struct {
 	Coverage    CoverageConfig    `yaml:"coverage" json:"coverage"`
 	Duplication DuplicationConfig `yaml:"duplication" json:"duplication"`
 	Complexity  ComplexityConfig  `yaml:"complexity" json:"complexity"`
+	CustomRules []CustomRule      `yaml:"custom-rules" json:"customRules"`
 }
 
 type ChecksConfig struct {
@@ -40,7 +41,8 @@ type ChecksConfig struct {
 	Coverage   bool `yaml:"coverage" json:"coverage"`
 	Duplication bool `yaml:"duplication" json:"duplication"`
 	Secrets    bool `yaml:"secrets" json:"secrets"`
-	DeadCode   bool `yaml:"dead-code" json:"deadCode"`
+	DeadCode    bool `yaml:"dead-code" json:"deadCode"`
+	CustomRules bool `yaml:"custom-rules" json:"customRules"`
 }
 
 type QualityGateConfig struct {
@@ -73,6 +75,32 @@ type ComplexityConfig struct {
 	Threshold int `yaml:"threshold" json:"threshold"` // max cognitive complexity per function (default: 15)
 }
 
+// CustomRule defines a user-specified code rule
+type CustomRule struct {
+	ID             string   `yaml:"id" json:"id"`
+	Type           string   `yaml:"type" json:"type"`
+	Pattern        string   `yaml:"pattern" json:"pattern"`
+	Packages       []string `yaml:"packages" json:"packages"`
+	MaxLines       int      `yaml:"max-lines" json:"maxLines"`
+	AllowIn        []string `yaml:"allow-in" json:"allowIn"`
+	Files          string   `yaml:"files" json:"files"`
+	Message        string   `yaml:"message" json:"message"`
+	Severity       string   `yaml:"severity" json:"severity"`
+	WhenPattern    string   `yaml:"when-pattern" json:"whenPattern"`
+	MustImportFrom string   `yaml:"must-import-from" json:"mustImportFrom"`
+	IgnoreComments *bool    `yaml:"ignore-comments" json:"ignoreComments"`
+	IgnoreTests    *bool    `yaml:"ignore-tests" json:"ignoreTests"`
+	AllowSubpaths  []string `yaml:"allow-subpaths" json:"allowSubpaths"`
+	Mode           string   `yaml:"mode" json:"mode"`           // "blocking" (default) or "advisory"
+	Language       string   `yaml:"language" json:"language"`   // semgrep language (default: "ts" for typescript)
+
+	// Advanced semgrep fields (type: semgrep only)
+	PatternNot        string            `yaml:"pattern-not" json:"patternNot"`
+	PatternInside     string            `yaml:"pattern-inside" json:"patternInside"`
+	PatternNotInside  string            `yaml:"pattern-not-inside" json:"patternNotInside"`
+	MetavariableRegex map[string]string `yaml:"metavariable-regex" json:"metavariableRegex"`
+}
+
 // DefaultConfig returns sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
@@ -95,6 +123,7 @@ func DefaultConfig() *Config {
 			Duplication: true,
 			Secrets:     false,
 			DeadCode:    false,
+			CustomRules: true,
 		},
 		QualityGate: QualityGateConfig{
 			NewCode: ThresholdConfig{
