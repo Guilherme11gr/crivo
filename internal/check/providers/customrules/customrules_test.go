@@ -1024,6 +1024,153 @@ func TestBuildSemgrepConfigFile_AllOptions(t *testing.T) {
 	}
 }
 
+// ─── Semgrep Batch ──────────────────────────────────────────────────────────
+
+func TestMatchSemgrepBatch_NotInstalled(t *testing.T) {
+	// Force semgrep unavailable
+	avail := false
+	old := semgrepAvailable
+	semgrepAvailable = &avail
+	defer func() { semgrepAvailable = old }()
+
+	rules := []CompiledRule{
+		{
+			Raw:      config.CustomRule{ID: "no-eval", Pattern: "eval(...)", Message: "No eval"},
+			Type:     RuleTypeSemgrep,
+			Severity: domain.SeverityBlocker,
+			Language: "ts",
+		},
+		{
+			Raw:      config.CustomRule{ID: "no-exec", Pattern: "exec(...)", Message: "No exec"},
+			Type:     RuleTypeSemgrep,
+			Severity: domain.SeverityBlocker,
+			Language: "ts",
+		},
+	}
+
+	issues := matchSemgrepBatch(context.Background(), rules, t.TempDir(), nil)
+	if len(issues) != 0 {
+		t.Errorf("expected 0 issues when semgrep not installed, got %d", len(issues))
+	}
+}
+
+func TestBuildSemgrepBatchConfig(t *testing.T) {
+	rules := []CompiledRule{
+		{
+			Raw:      config.CustomRule{ID: "no-eval", Pattern: "eval(...)", Message: "Do not use eval"},
+			Language: "ts",
+		},
+		{
+			Raw:      config.CustomRule{ID: "no-exec", Pattern: "exec(...)", Message: "Do not use exec"},
+			Language: "ts",
+		},
+		{
+			Raw:      config.CustomRule{ID: "no-system", Pattern: "system(...)", Message: "Do not use system"},
+			Language: "python",
+		},
+	}
+
+	path, err := buildSemgrepBatchConfig(rules)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer os.Remove(path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read config file: %v", err)
+	}
+
+	content := string(data)
+
+	// Verify all three rule IDs are present
+	for _, id := range []string{"no-eval", "no-exec", "no-system"} {
+		if !strings.Contains(content, id) {
+			t.Errorf("config file should contain rule ID %q", id)
+		}
+	}
+
+	// Verify all patterns are present
+	for _, pat := range []string{"eval(...)", "exec(...)", "system(...)"} {
+		if !strings.Contains(content, pat) {
+			t.Errorf("config file should contain pattern %q", pat)
+		}
+	}
+
+	// Verify languages
+	if !strings.Contains(content, "python") {
+		t.Error("config file should contain language 'python'")
+	}
+
+	// Verify it's valid YAML with rules key
+	if !strings.Contains(content, "rules:") {
+		t.Error("config file should have a 'rules:' key")
+	}
+
+	// Simple rules should use 'pattern' directly, not 'patterns'
+	if strings.Contains(content, "patterns:") {
+		t.Error("simple rules should use 'pattern' not 'patterns'")
+	}
+}
+
+func TestBuildSemgrepBatchConfig_MixedSimpleAndAdvanced(t *testing.T) {
+	rules := []CompiledRule{
+		{
+			Raw:      config.CustomRule{ID: "simple-rule", Pattern: "eval(...)", Message: "No eval"},
+			Language: "ts",
+		},
+		{
+			Raw: config.CustomRule{
+				ID:               "advanced-rule",
+				Pattern:          "$X / 100",
+				PatternNotInside: "function centsToReais(...) { ... }",
+				MetavariableRegex: map[string]string{
+					"$X": ".*[Cc]ents.*",
+				},
+				Message: "Use centsToReais()",
+			},
+			Language: "ts",
+		},
+	}
+
+	path, err := buildSemgrepBatchConfig(rules)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer os.Remove(path)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read config file: %v", err)
+	}
+
+	content := string(data)
+
+	// Both rule IDs should be present
+	if !strings.Contains(content, "simple-rule") {
+		t.Error("config file should contain 'simple-rule'")
+	}
+	if !strings.Contains(content, "advanced-rule") {
+		t.Error("config file should contain 'advanced-rule'")
+	}
+
+	// Advanced rule should have patterns list with pattern-not-inside and metavariable-regex
+	if !strings.Contains(content, "pattern-not-inside") {
+		t.Error("config file should contain 'pattern-not-inside' for advanced rule")
+	}
+	if !strings.Contains(content, "metavariable-regex") {
+		t.Error("config file should contain 'metavariable-regex' for advanced rule")
+	}
+	if !strings.Contains(content, "centsToReais") {
+		t.Error("config file should contain the pattern-not-inside value")
+	}
+
+	// The advanced rule should use 'patterns' (plural) key
+	if !strings.Contains(content, "patterns:") {
+		t.Error("advanced rule should use 'patterns' key")
+	}
+}
+
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 func writeFile(t *testing.T, dir, name, content string) {

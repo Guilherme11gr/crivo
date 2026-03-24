@@ -76,23 +76,9 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}
 	}
 
-	// Run semgrep rules — each invokes semgrep with --pattern
-	for _, rule := range semgrepRules {
-		glob := rule.Raw.Files
-		if glob == "" {
-			glob = defaultFileGlob
-		}
-		files, err := WalkFiles(ctx, projectDir, glob, cfg.Exclude)
-		if err != nil {
-			if ctx.Err() != nil {
-				result.Status = domain.StatusError
-				result.Summary = "Cancelled"
-				result.Duration = time.Since(start)
-				return result, nil
-			}
-			continue
-		}
-		issues := matchSemgrep(ctx, rule, projectDir, files)
+	// Run semgrep rules — batch all rules into minimal semgrep invocations (grouped by file glob)
+	if len(semgrepRules) > 0 {
+		issues := matchSemgrepBatch(ctx, semgrepRules, projectDir, cfg.Exclude)
 		allIssues = append(allIssues, issues...)
 	}
 

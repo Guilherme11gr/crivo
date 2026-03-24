@@ -275,8 +275,9 @@ type semgrepJSON struct {
 }
 
 type semgrepResultJSON struct {
-	Path  string `json:"path"`
-	Start struct {
+	CheckID string `json:"check_id"`
+	Path    string `json:"path"`
+	Start   struct {
 		Line int `json:"line"`
 		Col  int `json:"col"`
 	} `json:"start"`
@@ -439,4 +440,190 @@ func matchSemgrep(ctx context.Context, rule CompiledRule, projectDir string, fil
 	}
 
 	return issues
+}
+
+// buildSemgrepBatchConfig generates a temporary semgrep YAML config file containing multiple rules.
+// Returns the path to the temp file (caller must clean up) or an error.
+func buildSemgrepBatchConfig(rules []CompiledRule) (string, error) {
+	var rulesList []map[string]any
+
+	for _, rule := range rules {
+		var ruleEntry map[string]any
+
+		if hasAdvancedSemgrepOptions(rule.Raw) {
+			// Advanced rule: use patterns list
+			var patterns []map[string]any
+			patterns = append(patterns, map[string]any{"pattern": rule.Raw.Pattern})
+
+			if rule.Raw.PatternNot != "" {
+				patterns = append(patterns, map[string]any{"pattern-not": rule.Raw.PatternNot})
+			}
+			if rule.Raw.PatternInside != "" {
+				patterns = append(patterns, map[string]any{"pattern-inside": rule.Raw.PatternInside})
+			}
+			if rule.Raw.PatternNotInside != "" {
+				patterns = append(patterns, map[string]any{"pattern-not-inside": rule.Raw.PatternNotInside})
+			}
+			for varName, regex := range rule.Raw.MetavariableRegex {
+				patterns = append(patterns, map[string]any{
+					"metavariable-regex": map[string]string{
+						"metavariable": varName,
+						"regex":        regex,
+					},
+				})
+			}
+
+			ruleEntry = map[string]any{
+				"id":        rule.Raw.ID,
+				"patterns":  patterns,
+				"message":   rule.Raw.Message,
+				"languages": []string{rule.Language},
+				"severity":  "WARNING",
+			}
+		} else {
+			// Simple rule: use pattern directly
+			ruleEntry = map[string]any{
+				"id":        rule.Raw.ID,
+				"pattern":   rule.Raw.Pattern,
+				"message":   rule.Raw.Message,
+				"languages": []string{rule.Language},
+				"severity":  "WARNING",
+			}
+		}
+
+		rulesList = append(rulesList, ruleEntry)
+	}
+
+	batchConfig := map[string]any{
+		"rules": rulesList,
+	}
+
+	data, err := yaml.Marshal(batchConfig)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal semgrep batch config: %w", err)
+	}
+
+	tmpFile, err := os.CreateTemp("", "crivo-semgrep-batch-*.yaml")
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpFile.Name())
+		return "", fmt.Errorf("failed to write semgrep batch config: %w", err)
+	}
+	tmpFile.Close()
+
+	return tmpFile.Name(), nil
+}
+
+// matchSemgrepBatch runs semgrep once with multiple rules batched into a single config file.
+// Rules are grouped by their file glob, and one semgrep invocation is made per glob group.
+// Results are mapped back to the correct rule by check_id.
+func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir string, exclude []string) []domain.Issue {
+	if !isSemgrepAvailable() || len(rules) == 0 {
+		return nil
+	}
+
+	// Build a lookup of rules by ID for mapping results back
+	ruleByID := map[string]CompiledRule{}
+	for _, rule := range rules {
+		ruleByID[rule.Raw.ID] = rule
+	}
+
+	// Group rules by their file glob
+	globToRules := map[string][]CompiledRule{}
+	for _, rule := range rules {
+		glob := rule.Raw.Files
+		if glob == "" {
+			glob = defaultFileGlob
+		}
+		globToRules[glob] = append(globToRules[glob], rule)
+	}
+
+	var allIssues []domain.Issue
+
+	for glob, groupRules := range globToRules {
+		files, err := WalkFiles(ctx, projectDir, glob, exclude)
+		if err != nil {
+			if ctx.Err() != nil {
+				return allIssues
+			}
+			continue
+		}
+		if len(files) == 0 {
+			continue
+		}
+
+		// Build batch config for this glob group
+		configPath, err := buildSemgrepBatchConfig(groupRules)
+		if err != nil {
+			continue
+		}
+
+		args := []string{
+			"scan",
+			"--json",
+			"--quiet",
+			"--config", configPath,
+		}
+
+		// Add file targets
+		for _, f := range files {
+			args = append(args, filepath.Join(projectDir, f))
+		}
+
+		cmd := exec.CommandContext(ctx, "semgrep", args...)
+		cmd.Dir = projectDir
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		_ = cmd.Run()
+		os.Remove(configPath)
+
+		output := stdout.Bytes()
+		if len(output) == 0 {
+			continue
+		}
+
+		var result semgrepJSON
+		if err := json.Unmarshal(output, &result); err != nil {
+			continue
+		}
+
+		for _, r := range result.Results {
+			rule, ok := ruleByID[r.CheckID]
+			if !ok {
+				continue
+			}
+
+			relPath := r.Path
+			if rel, err := filepath.Rel(projectDir, r.Path); err == nil {
+				relPath = rel
+			}
+			relPath = filepath.ToSlash(relPath)
+
+			// Check allow-in
+			if len(rule.AllowInGlobs) > 0 && IsAllowedIn(relPath, rule.AllowInGlobs) {
+				continue
+			}
+
+			allIssues = append(allIssues, domain.Issue{
+				RuleID:   rule.Raw.ID,
+				Message:  rule.Raw.Message,
+				File:     relPath,
+				Line:     r.Start.Line,
+				Column:   r.Start.Col,
+				Severity: rule.Severity,
+				Type:     domain.IssueTypeCodeSmell,
+				Source:   "custom-rules",
+				Effort:   "15min",
+			})
+		}
+	}
+
+	return allIssues
 }

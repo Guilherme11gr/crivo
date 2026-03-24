@@ -44,6 +44,7 @@ qg trends                  # Histórico com sparklines dos últimos runs
 | Secrets | gitleaks | Credenciais e chaves hardcoded |
 | Segurança | semgrep | Padrões de vulnerabilidade (SAST) |
 | Código morto | knip | Exports, arquivos e dependências não utilizados |
+| Custom Rules | regex + semgrep | Regras customizadas definidas no config |
 
 Os checks rodam em paralelo. Cada um é opcional — o crivo só executa o que faz sentido pro seu projeto (detecta tsconfig.json, config do eslint, jest no package.json, etc).
 
@@ -102,6 +103,7 @@ checks:
   secrets: false
   semgrep: false
   dead-code: false
+  custom-rules: true
 
 coverage:
   lines: 60
@@ -187,6 +189,62 @@ Pra outros sistemas de CI, o crivo retorna exit code 1 quando o gate falha, 0 qu
 | Código morto | knip | — | — |
 
 Projetos TypeScript/JavaScript têm a cobertura mais completa. Go e Python recebem duplicação, complexidade (regex), secrets e segurança.
+
+## Custom Rules
+
+Regras customizadas direto no `.qualitygate.yaml`. Regex-based ou AST-based (via semgrep):
+
+```yaml
+custom-rules:
+  # Proíbe imports diretos — force uso de wrappers
+  - id: no-date-libs
+    type: ban-import
+    packages: ["date-fns", "moment", "dayjs"]
+    allow-subpaths: ["locale"]
+    allow-in: ["**/shared/utils/date-utils.ts"]
+    message: "Use date-utils wrapper"
+    severity: blocker
+
+  # Bloqueia patterns com regex
+  - id: no-console-log
+    type: ban-pattern
+    pattern: "console\\.(?:log|debug)\\("
+    files: "src/**/*.{ts,tsx}"
+    message: "Use logger ao invés de console.log"
+    severity: major
+
+  # Semgrep — match semântico com AST
+  - id: no-manual-cents
+    type: semgrep
+    pattern: "$X / 100"
+    pattern-not-inside: "function centsToReais(...) { ... }"
+    metavariable-regex:
+      "$X": ".*[Cc]ents.*"
+    message: "Use centsToReais()"
+    severity: major
+
+  # Bloqueia dependências no package.json
+  - id: no-axios
+    type: ban-dependency
+    packages: ["axios", "got", "node-fetch"]
+    message: "Projeto usa fetch nativo"
+    severity: blocker
+
+  # Limita tamanho de arquivo
+  - id: component-max-300
+    type: max-lines
+    max-lines: 300
+    files: "src/components/**/*.tsx"
+    message: "Componente muito grande, extraia subcomponentes"
+    severity: major
+    mode: advisory
+```
+
+**8 tipos de regra:** `ban-import`, `ban-pattern`, `require-import`, `enforce-pattern`, `ban-dependency`, `max-lines`, `semgrep`
+
+**Smart defaults:** `ignore-comments` e `ignore-tests` são `true` por padrão para ban-pattern/ban-import.
+
+**Advisory mode:** `mode: advisory` reporta mas não bloqueia o gate — útil pra rollout gradual.
 
 ## Como funciona
 

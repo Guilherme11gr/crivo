@@ -419,6 +419,18 @@ func analyzeFileRegex(path string, projectDir string) ([]astFunction, int) {
 		}
 
 		if matches := funcDeclRe.FindStringSubmatch(line); matches != nil {
+			name := ""
+			for i := 1; i < len(matches); i++ {
+				if matches[i] != "" {
+					name = matches[i]
+					break
+				}
+			}
+			// Skip keywords that false-match as function declarations
+			if name == "" || name == "if" || name == "for" || name == "while" || name == "switch" || name == "catch" || name == "return" {
+				goto skipFuncDetection
+			}
+
 			if inFunction && currentFunc != "" {
 				functions = append(functions, astFunction{
 					Name:       currentFunc,
@@ -428,17 +440,6 @@ func analyzeFileRegex(path string, projectDir string) ([]astFunction, int) {
 				})
 			}
 
-			name := ""
-			for i := 1; i < len(matches); i++ {
-				if matches[i] != "" {
-					name = matches[i]
-					break
-				}
-			}
-			if name == "" || name == "if" || name == "for" || name == "while" || name == "switch" {
-				continue
-			}
-
 			currentFunc = name
 			currentFuncLine = lineNum
 			complexity = 0
@@ -446,6 +447,7 @@ func analyzeFileRegex(path string, projectDir string) ([]astFunction, int) {
 			inFunction = true
 			braceCount = 0
 		}
+	skipFuncDetection:
 
 		if !inFunction {
 			continue

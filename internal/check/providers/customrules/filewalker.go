@@ -2,6 +2,7 @@ package customrules
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,7 +11,8 @@ import (
 
 const (
 	defaultFileGlob = "src/**/*.{ts,tsx,js,jsx}"
-	maxFileSize      = 1 << 20 // 1MB
+	maxFileSize     = 1 << 20 // 1MB
+	maxDepth        = 50      // prevent symlink loops
 )
 
 var defaultExcludeDirs = map[string]bool{
@@ -25,6 +27,7 @@ var defaultExcludeDirs = map[string]bool{
 
 // WalkFiles returns files matching the glob pattern under projectDir,
 // skipping excluded directories and binary/large files.
+// Uses WalkDir for performance (avoids os.Stat per entry).
 func WalkFiles(ctx context.Context, projectDir string, fileGlob string, exclude []string) ([]string, error) {
 	if fileGlob == "" {
 		fileGlob = defaultFileGlob
@@ -40,12 +43,12 @@ func WalkFiles(ctx context.Context, projectDir string, fileGlob string, exclude 
 
 	var matches []string
 
-	err := filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
+	err := filepath.WalkDir(projectDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip unreadable
 		}
 
-		// Check context cancellation
+		// Check context cancellation periodically
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -55,15 +58,28 @@ func WalkFiles(ctx context.Context, projectDir string, fileGlob string, exclude 
 		rel, _ := filepath.Rel(projectDir, path)
 		rel = filepath.ToSlash(rel)
 
-		if info.IsDir() {
+		if d.IsDir() {
 			base := filepath.Base(path)
 			if excludeSet[base] {
+				return filepath.SkipDir
+			}
+			// Depth guard against symlink loops
+			if strings.Count(rel, "/") > maxDepth {
 				return filepath.SkipDir
 			}
 			return nil
 		}
 
-		// Skip large files
+		// Skip symlinks to avoid loops
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+
+		// Skip large files (need FileInfo for size)
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
 		if info.Size() > maxFileSize {
 			return nil
 		}
