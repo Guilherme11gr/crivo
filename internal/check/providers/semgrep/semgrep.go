@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -95,15 +96,35 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	cmd := exec.CommandContext(ctx, semgrepBin, args...)
 	cmd.Dir = projectDir
 
+	// Fix Python encoding issues on Windows
+	if runtime.GOOS == "windows" {
+		cmd.Env = append(cmd.Environ(), "PYTHONUTF8=1")
+	}
+
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	_ = cmd.Run()
+	runErr := cmd.Run()
 	duration := time.Since(start)
 
 	output := stdout.Bytes()
 	if len(output) == 0 {
+		// No JSON output — check if semgrep crashed
+		if runErr != nil {
+			errMsg := strings.TrimSpace(stderr.String())
+			if errMsg == "" {
+				errMsg = runErr.Error()
+			}
+			return &domain.CheckResult{
+				Name:     p.Name(),
+				ID:       p.ID(),
+				Status:   domain.StatusError,
+				Summary:  "Semgrep failed to run",
+				Details:  []string{errMsg},
+				Duration: duration,
+			}, nil
+		}
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),

@@ -1,7 +1,13 @@
 package check
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,7 +123,8 @@ func EnsureTool(name string) (string, error) {
 // ---------------------------------------------------------------------------
 
 var toolInstallers = map[string]func() error{
-	"semgrep": installSemgrep,
+	"semgrep":  installSemgrep,
+	"gitleaks": installGitleaks,
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +161,128 @@ func installSemgrep() error {
 	}
 
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Gitleaks installer — downloads pre-built binary from GitHub Releases
+// ---------------------------------------------------------------------------
+
+const gitleaksVersion = "8.24.3"
+
+func installGitleaks() error {
+	toolDir := QGToolDir()
+
+	osName := runtime.GOOS
+	arch := runtime.GOARCH
+
+	// Map Go OS/arch names to gitleaks release naming
+	var fileName string
+	switch {
+	case osName == "linux" && arch == "amd64":
+		fileName = fmt.Sprintf("gitleaks_%s_linux_x64.tar.gz", gitleaksVersion)
+	case osName == "linux" && arch == "arm64":
+		fileName = fmt.Sprintf("gitleaks_%s_linux_arm64.tar.gz", gitleaksVersion)
+	case osName == "darwin" && arch == "amd64":
+		fileName = fmt.Sprintf("gitleaks_%s_darwin_x64.tar.gz", gitleaksVersion)
+	case osName == "darwin" && arch == "arm64":
+		fileName = fmt.Sprintf("gitleaks_%s_darwin_arm64.tar.gz", gitleaksVersion)
+	case osName == "windows" && arch == "amd64":
+		fileName = fmt.Sprintf("gitleaks_%s_windows_x64.zip", gitleaksVersion)
+	case osName == "windows" && arch == "arm64":
+		fileName = fmt.Sprintf("gitleaks_%s_windows_arm64.zip", gitleaksVersion)
+	default:
+		return fmt.Errorf("unsupported platform: %s/%s — install gitleaks manually", osName, arch)
+	}
+
+	url := fmt.Sprintf("https://github.com/gitleaks/gitleaks/releases/download/v%s/%s", gitleaksVersion, fileName)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return fmt.Errorf("downloading gitleaks: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("downloading gitleaks: HTTP %d from %s", resp.StatusCode, url)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("reading gitleaks download: %w", err)
+	}
+
+	binName := "gitleaks"
+	if osName == "windows" {
+		binName = "gitleaks.exe"
+	}
+
+	destPath := filepath.Join(toolDir, binName)
+
+	if strings.HasSuffix(fileName, ".zip") {
+		if err := extractZipBinary(body, binName, destPath); err != nil {
+			return fmt.Errorf("extracting gitleaks zip: %w", err)
+		}
+	} else {
+		if err := extractTarGzBinary(body, binName, destPath); err != nil {
+			return fmt.Errorf("extracting gitleaks tar.gz: %w", err)
+		}
+	}
+
+	os.Chmod(destPath, 0755)
+	return nil
+}
+
+func extractTarGzBinary(data []byte, binName, destPath string) error {
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if filepath.Base(hdr.Name) == binName {
+			f, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.Copy(f, tr)
+			return err
+		}
+	}
+	return fmt.Errorf("%s not found in archive", binName)
+}
+
+func extractZipBinary(data []byte, binName, destPath string) error {
+	r, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return err
+	}
+	for _, f := range r.File {
+		if filepath.Base(f.Name) == binName {
+			rc, err := f.Open()
+			if err != nil {
+				return err
+			}
+			defer rc.Close()
+			out, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer out.Close()
+			_, err = io.Copy(out, rc)
+			return err
+		}
+	}
+	return fmt.Errorf("%s not found in archive", binName)
 }
 
 // ---------------------------------------------------------------------------

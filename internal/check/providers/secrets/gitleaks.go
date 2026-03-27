@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
@@ -34,17 +38,52 @@ func (p *Provider) Name() string { return "Secrets" }
 func (p *Provider) ID() string   { return "secrets" }
 
 func (p *Provider) Detect(_ context.Context, _ string) bool {
-	_, err := exec.LookPath("gitleaks")
-	return err == nil
+	path, err := check.EnsureTool("gitleaks")
+	return err == nil && path != ""
 }
 
 func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Config) (*domain.CheckResult, error) {
 	start := time.Now()
 
-	cmd := exec.CommandContext(ctx, "gitleaks", "detect",
+	// On Windows, /dev/stdout doesn't exist — use a temp file instead
+	var reportPath string
+	var tmpFile *os.File
+	if runtime.GOOS == "windows" {
+		var err error
+		tmpFile, err = os.CreateTemp("", "gitleaks-*.json")
+		if err != nil {
+			return &domain.CheckResult{
+				Name:     p.Name(),
+				ID:       p.ID(),
+				Status:   domain.StatusError,
+				Summary:  "Failed to create temp file for gitleaks",
+				Details:  []string{err.Error()},
+				Duration: time.Since(start),
+			}, nil
+		}
+		tmpFile.Close()
+		reportPath = tmpFile.Name()
+		defer os.Remove(reportPath)
+	} else {
+		reportPath = "/dev/stdout"
+	}
+
+	gitleaksBin, err := check.EnsureTool("gitleaks")
+	if err != nil {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusSkipped,
+			Summary:  fmt.Sprintf("gitleaks not available: %v", err),
+			Duration: time.Since(start),
+			Details:  []string{"Install manually: https://github.com/gitleaks/gitleaks#installing"},
+		}, nil
+	}
+
+	cmd := exec.CommandContext(ctx, gitleaksBin, "detect",
 		"--source="+projectDir,
 		"--report-format=json",
-		"--report-path=/dev/stdout",
+		"--report-path="+reportPath,
 		"--no-git",
 		"--quiet",
 	)
@@ -56,7 +95,12 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 	runErr := cmd.Run()
 	duration := time.Since(start)
 
-	output := stdout.Bytes()
+	var output []byte
+	if runtime.GOOS == "windows" {
+		output, _ = os.ReadFile(reportPath)
+	} else {
+		output = stdout.Bytes()
+	}
 
 	// Exit 0 = no leaks, exit 1 = leaks found
 	if runErr == nil && len(output) == 0 {
