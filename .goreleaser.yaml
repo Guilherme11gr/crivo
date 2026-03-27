@@ -39,19 +39,6 @@ changelog:
       - "^test:"
       - "^chore:"
 
-brews:
-  - name: crivo
-    repository:
-      owner: guilherme11gr
-      name: homebrew-tap
-    description: "Lightweight quality gate for code analysis — open source SonarQube alternative"
-    homepage: "https://github.com/guilherme11gr/crivo"
-    license: "MIT"
-    install: |
-      bin.install "crivo"
-    test: |
-      system "#{bin}/crivo", "version"
-
 nfpms:
   - id: default
     package_name: crivo
