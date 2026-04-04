@@ -233,19 +233,6 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 				}
 			}
 
-		case "eslint":
-			errors := 0.0
-			if check.Metrics != nil {
-				errors = check.Metrics["errors"]
-			}
-			conditions = append(conditions, domain.QualityGateCondition{
-				Metric:    "lint_errors",
-				Operator:  "lt",
-				Threshold: 1,
-				Actual:    errors,
-				Passed:    errors == 0,
-			})
-
 		case "secrets":
 			secrets := 0.0
 			if check.Metrics != nil {

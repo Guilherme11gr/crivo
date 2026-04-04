@@ -171,7 +171,9 @@ func (s *Store) GetTrend(projectDir string, limit int) ([]TrendPoint, error) {
 		if json.Unmarshal([]byte(metricsStr), &metrics) == nil {
 			p.Coverage = metrics["coverage_lines"]
 			p.Duplication = metrics["duplication_percentage"]
-			p.Bugs = int(metrics["eslint_errors"])
+			if val, ok := metrics["typescript_type_errors"]; ok {
+				p.Bugs = int(val)
+			}
 		}
 
 		points = append(points, p)

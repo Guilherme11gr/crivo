@@ -26,7 +26,7 @@ func TestOpenAndSave(t *testing.T) {
 		},
 		Checks: []domain.CheckResult{
 			{
-				ID:     "eslint",
+				ID:     "typescript",
 				Status: domain.StatusPassed,
 				Metrics: map[string]float64{
 					"errors": 0,
@@ -108,8 +108,8 @@ func TestIssueLifecycle(t *testing.T) {
 	defer s.Close()
 
 	issues := []domain.Issue{
-		{RuleID: "no-var", File: "a.ts", Line: 1, Source: "eslint", Message: "Use let"},
-		{RuleID: "no-any", File: "b.ts", Line: 5, Source: "eslint", Message: "No any"},
+		{RuleID: "no-var", File: "a.ts", Line: 1, Source: "typescript", Message: "Use let"},
+		{RuleID: "no-any", File: "b.ts", Line: 5, Source: "typescript", Message: "No any"},
 	}
 
 	if err := s.SyncIssues(issues); err != nil {
@@ -117,7 +117,7 @@ func TestIssueLifecycle(t *testing.T) {
 	}
 
 	// Mark one as false positive
-	fp := "eslint:no-var:a.ts:1"
+	fp := "typescript:no-var:a.ts:1"
 	if err := s.MarkIssue(fp, "false_positive", "Not applicable"); err != nil {
 		t.Fatalf("MarkIssue: %v", err)
 	}

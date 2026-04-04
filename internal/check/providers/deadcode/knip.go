@@ -55,6 +55,8 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 	duration := time.Since(start)
 
 	output := stdout.String()
+	// Strip ANSI escape codes from knip output (npx on Windows may force colors)
+	output = stripANSI(output)
 	if runErr != nil && output == "" {
 		errMsg := stderr.String()
 		if strings.Contains(errMsg, "command not found") || strings.Contains(errMsg, "not recognized") || strings.Contains(errMsg, "ERR!") {
@@ -123,7 +125,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 
 var (
 	fileLineRe   = regexp.MustCompile(`^(.+?)(?::(\d+))?$`)
-	sectionRe    = regexp.MustCompile(`^(Unused files|Unused dependencies|Unused exports|Unused types)`)
+	sectionRe    = regexp.MustCompile(`^(Unused files|Unused devDependencies|Unused dependencies|Unused exports|Unused types)`)
 )
 
 func parseKnipOutput(output string, projectDir string) ([]domain.Issue, int, int, int) {
@@ -174,6 +176,9 @@ func parseKnipOutput(output string, projectDir string) ([]domain.Issue, int, int
 			unusedExports++
 			ruleID = "unused-type"
 			message = "Type export is not used"
+		case "Unused devDependencies":
+			currentSection = "Unused dependencies"
+			continue
 		case "Unused dependencies":
 			unusedDeps++
 			ruleID = "unused-dependency"
@@ -223,3 +228,10 @@ func parseKnipOutput(output string, projectDir string) ([]domain.Issue, int, int
 
 	return issues, unusedFiles, unusedExports, unusedDeps
 }
+
+// stripANSI removes ANSI escape sequences from a string.
+func stripANSI(s string) string {
+	return ansiRe.ReplaceAllString(s, "")
+}
+
+var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)

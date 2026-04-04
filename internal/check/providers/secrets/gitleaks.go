@@ -85,7 +85,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		"--report-format=json",
 		"--report-path="+reportPath,
 		"--no-git",
-		"--quiet",
+		"--no-banner",
 	)
 
 	var stdout, stderr bytes.Buffer

@@ -17,7 +17,6 @@ import (
 	"github.com/guilherme11gr/crivo/internal/check/providers/customrules"
 	"github.com/guilherme11gr/crivo/internal/check/providers/deadcode"
 	"github.com/guilherme11gr/crivo/internal/check/providers/duplication"
-	"github.com/guilherme11gr/crivo/internal/check/providers/eslint"
 	"github.com/guilherme11gr/crivo/internal/check/providers/secrets"
 	"github.com/guilherme11gr/crivo/internal/check/providers/semgrep"
 	"github.com/guilherme11gr/crivo/internal/check/providers/typescript"
@@ -199,7 +198,6 @@ func runAnalysis(opts options) int {
 	// Register all providers
 	registry := check.NewRegistry()
 	registry.Register(typescript.New())
-	registry.Register(eslint.New())
 	registry.Register(coverage.New())
 	registry.Register(duplication.New())
 	registry.Register(complexity.New())

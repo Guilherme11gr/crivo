@@ -15,9 +15,6 @@ func TestDefaultConfig(t *testing.T) {
 	if !cfg.Checks.Typescript {
 		t.Error("Checks.Typescript should be true by default")
 	}
-	if !cfg.Checks.ESLint {
-		t.Error("Checks.ESLint should be true by default")
-	}
 	if cfg.Coverage.Lines != 60 {
 		t.Errorf("Coverage.Lines = %f, want 60", cfg.Coverage.Lines)
 	}
@@ -70,7 +67,7 @@ profile: balanced
 coverage:
   lines: 75
 checks:
-  eslint: false
+  semgrep: true
 `
 	err := os.WriteFile(filepath.Join(dir, ".qualitygate.yaml"), []byte(configContent), 0644)
 	if err != nil {
@@ -82,8 +79,8 @@ checks:
 	if cfg.Coverage.Lines != 75 {
 		t.Errorf("Coverage.Lines = %f, want 75", cfg.Coverage.Lines)
 	}
-	if cfg.Checks.ESLint != false {
-		t.Error("ESLint should be false after override")
+	if cfg.Checks.Semgrep != true {
+		t.Error("Semgrep should be true after override")
 	}
 }
 

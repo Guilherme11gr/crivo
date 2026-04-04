@@ -158,7 +158,8 @@ func isCheckEnabled(id string, cfg *config.Config, disabledChecks map[string]boo
 	case "typescript":
 		return cfg.Checks.Typescript
 	case "eslint":
-		return cfg.Checks.ESLint
+		// Deprecated: ESLint provider removed. Always disabled.
+		return false
 	case "coverage":
 		return cfg.Checks.Coverage
 	case "duplication":

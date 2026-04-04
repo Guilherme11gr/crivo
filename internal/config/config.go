@@ -36,7 +36,6 @@ type Config struct {
 
 type ChecksConfig struct {
 	Typescript bool `yaml:"typescript" json:"typescript"`
-	ESLint     bool `yaml:"eslint" json:"eslint"`
 	Semgrep    bool `yaml:"semgrep" json:"semgrep"`
 	Coverage   bool `yaml:"coverage" json:"coverage"`
 	Duplication bool `yaml:"duplication" json:"duplication"`
@@ -123,7 +122,6 @@ func DefaultConfig() *Config {
 		},
 		Checks: ChecksConfig{
 			Typescript:  true,
-			ESLint:      true,
 			Semgrep:     false,
 			Coverage:    true,
 			Duplication: true,

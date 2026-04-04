@@ -39,7 +39,6 @@ func applyStrict(cfg *Config) {
 
 	// Enable all checks in strict mode
 	cfg.Checks.Typescript = true
-	cfg.Checks.ESLint = true
 	cfg.Checks.Coverage = true
 	cfg.Checks.Duplication = true
 	cfg.Checks.Semgrep = true
