@@ -2,6 +2,8 @@ package coverage
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/guilherme11gr/crivo/internal/domain"
@@ -186,5 +188,88 @@ func TestNameAndID(t *testing.T) {
 	}
 	if p.ID() != "coverage" {
 		t.Errorf("expected ID='coverage', got %q", p.ID())
+	}
+}
+
+func TestDetectTestRunner(t *testing.T) {
+	tests := []struct {
+		name    string
+		pkgJSON string
+		want    string
+	}{
+		{
+			name:    "vitest in devDependencies",
+			pkgJSON: `{"devDependencies":{"vitest":"^1.0.0"}}`,
+			want:    "vitest",
+		},
+		{
+			name:    "jest in devDependencies",
+			pkgJSON: `{"devDependencies":{"jest":"^29.0.0"}}`,
+			want:    "jest",
+		},
+		{
+			name:    "vitest takes priority over jest",
+			pkgJSON: `{"devDependencies":{"vitest":"^1.0.0","jest":"^29.0.0"}}`,
+			want:    "vitest",
+		},
+		{
+			name:    "vitest in dependencies (not devDeps)",
+			pkgJSON: `{"dependencies":{"vitest":"^1.0.0"}}`,
+			want:    "vitest",
+		},
+		{
+			name:    "vitest in test script",
+			pkgJSON: `{"scripts":{"test":"vitest run"},"devDependencies":{}}`,
+			want:    "vitest",
+		},
+		{
+			name:    "jest in test script",
+			pkgJSON: `{"scripts":{"test":"jest --coverage"},"devDependencies":{}}`,
+			want:    "jest",
+		},
+		{
+			name:    "no test runner detected",
+			pkgJSON: `{"scripts":{"build":"tsc"},"dependencies":{}}`,
+			want:    "",
+		},
+		{
+			name:    "no package.json",
+			pkgJSON: "",
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var dir string
+			if tt.pkgJSON != "" {
+				dir = t.TempDir()
+				if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(tt.pkgJSON), 0644); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				dir = t.TempDir() // exists but no package.json
+			}
+
+			got := detectTestRunner(dir)
+			if got != tt.want {
+				t.Errorf("detectTestRunner() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTestRunnerMetric(t *testing.T) {
+	if testRunnerMetric("vitest") != 1 {
+		t.Error("expected vitest = 1")
+	}
+	if testRunnerMetric("jest") != 2 {
+		t.Error("expected jest = 2")
+	}
+	if testRunnerMetric("unknown") != 0 {
+		t.Error("expected unknown = 0")
+	}
+	if testRunnerMetric("") != 0 {
+		t.Error("expected empty = 0")
 	}
 }

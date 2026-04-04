@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/guilherme11gr/crivo/internal/check"
@@ -41,45 +42,62 @@ func New() *Provider { return &Provider{} }
 func (p *Provider) Name() string { return "Coverage" }
 func (p *Provider) ID() string   { return "coverage" }
 
-func (p *Provider) Detect(_ context.Context, projectDir string) bool {
+// detectTestRunner determines which test runner is available in the project.
+// Returns "vitest" or "jest". Vitest takes priority if both are present.
+func detectTestRunner(projectDir string) string {
+	// Check package.json for test runner dependencies
 	pkgPath := filepath.Join(projectDir, "package.json")
 	data, err := os.ReadFile(pkgPath)
 	if err != nil {
-		return false
+		return ""
 	}
 
 	var pkg map[string]json.RawMessage
 	if err := json.Unmarshal(data, &pkg); err != nil {
-		return false
+		return ""
 	}
 
 	// Check for test script
 	if scripts, ok := pkg["scripts"]; ok {
 		var s map[string]string
 		if json.Unmarshal(scripts, &s) == nil {
-			if _, hasTest := s["test"]; hasTest {
-				return true
-			}
-		}
-	}
-
-	// Check for jest in devDependencies
-	for _, key := range []string{"devDependencies", "dependencies"} {
-		if deps, ok := pkg[key]; ok {
-			var d map[string]string
-			if json.Unmarshal(deps, &d) == nil {
-				if _, hasJest := d["jest"]; hasJest {
-					return true
+			if testCmd, hasTest := s["test"]; hasTest {
+				if strings.Contains(testCmd, "vitest") {
+					return "vitest"
+				}
+				if strings.Contains(testCmd, "jest") {
+					return "jest"
 				}
 			}
 		}
 	}
 
-	return false
+	// Check for test runner in dependencies (vitest takes priority)
+	for _, key := range []string{"devDependencies", "dependencies"} {
+		if deps, ok := pkg[key]; ok {
+			var d map[string]string
+			if json.Unmarshal(deps, &d) == nil {
+				if _, hasVitest := d["vitest"]; hasVitest {
+					return "vitest"
+				}
+				if _, hasJest := d["jest"]; hasJest {
+					return "jest"
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+func (p *Provider) Detect(_ context.Context, projectDir string) bool {
+	return detectTestRunner(projectDir) != ""
 }
 
 func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.Config) (*domain.CheckResult, error) {
 	start := time.Now()
+
+	runner := detectTestRunner(projectDir)
 
 	npxBin := check.FindNpx()
 	if npxBin == "" {
@@ -92,13 +110,25 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}, nil
 	}
 
-	// Run Jest with coverage
-	cmd := exec.CommandContext(ctx, npxBin, "jest",
-		"--coverage",
-		"--coverageReporters=json-summary",
-		"--passWithNoTests",
-		"--silent",
-	)
+	// Build command based on detected test runner
+	var args []string
+	switch runner {
+	case "vitest":
+		args = []string{"vitest", "run",
+			"--coverage",
+			"--coverage.reporter=json-summary",
+			"--passWithNoTests",
+		}
+	default: // jest
+		args = []string{"jest",
+			"--coverage",
+			"--coverageReporters=json-summary",
+			"--passWithNoTests",
+			"--silent",
+		}
+	}
+
+	cmd := exec.CommandContext(ctx, npxBin, args...)
 	cmd.Dir = projectDir
 	cmd.Env = append(check.NodeEnv(), "CI=true", "NODE_ENV=test")
 
@@ -109,7 +139,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	runErr := cmd.Run()
 	duration := time.Since(start)
 
-	// Read coverage summary
+	// Read coverage summary (same format for both jest and vitest)
 	summaryPath := filepath.Join(projectDir, "coverage", "coverage-summary.json")
 	data, err := os.ReadFile(summaryPath)
 	if err != nil {
@@ -120,7 +150,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 				Name:     p.Name(),
 				ID:       p.ID(),
 				Status:   domain.StatusFailed,
-				Summary:  "Tests failed, no coverage generated",
+				Summary:  fmt.Sprintf("Tests failed, no coverage generated (runner: %s)", runner),
 				Details:  extractTestFailures(output),
 				Duration: duration,
 			}, nil
@@ -163,6 +193,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		"branches":   total.Branches.Pct,
 		"functions":  total.Functions.Pct,
 		"statements": total.Statements.Pct,
+		"test_runner": testRunnerMetric(runner),
 	}
 
 	// Check thresholds
@@ -291,4 +322,16 @@ func extractTestFailures(output string) []string {
 		failures = failures[:15]
 	}
 	return failures
+}
+
+// testRunnerMetric returns a numeric code for the test runner (1=vitest, 2=jest)
+func testRunnerMetric(runner string) float64 {
+	switch runner {
+	case "vitest":
+		return 1
+	case "jest":
+		return 2
+	default:
+		return 0
+	}
 }
