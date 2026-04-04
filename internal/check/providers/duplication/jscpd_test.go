@@ -207,3 +207,47 @@ func TestIssueConstruction(t *testing.T) {
 		t.Errorf("expected line 10, got %d", issue.Line)
 	}
 }
+
+func TestNormalizePath(t *testing.T) {
+	// Use a projectDir that works on both Windows and Unix
+	projectDir := filepath.Join(string(filepath.Separator), "project")
+
+	tests := []struct {
+		name     string
+		path     string
+		want     string
+	}{
+		{"empty path", "", ""},
+		{"relative path from project root", "src/utils.ts", "src/utils.ts"},
+		{"relative path with nested dirs", "src/components/Button.tsx", "src/components/Button.tsx"},
+		{"dot-relative path", "./src/utils.ts", "src/utils.ts"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizePath(projectDir, tt.path)
+			if filepath.ToSlash(got) != filepath.ToSlash(tt.want) {
+				t.Errorf("normalizePath(%q, %q) = %q, want %q", projectDir, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNormalizePath_Absolute(t *testing.T) {
+	// Absolute path tests require a real absolute projectDir (with drive letter on Windows)
+	// Use the temp directory which is always absolute
+	tmpDir := t.TempDir()
+
+	// Create a file inside to make it a real path
+	subDir := filepath.Join(tmpDir, "src")
+	if err := os.MkdirAll(subDir, 0755); err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+
+	absPath := filepath.Join(tmpDir, "src", "utils.ts")
+	got := normalizePath(tmpDir, absPath)
+	want := filepath.ToSlash("src/utils.ts")
+	if filepath.ToSlash(got) != want {
+		t.Errorf("normalizePath(%q, %q) = %q, want %q", tmpDir, absPath, got, want)
+	}
+}

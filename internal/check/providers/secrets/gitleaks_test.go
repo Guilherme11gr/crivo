@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/guilherme11gr/crivo/internal/domain"
@@ -41,7 +42,7 @@ func TestParseGitleaksOutput_WithSecrets(t *testing.T) {
 			"Entropy": 4.2,
 			"RuleID": "generic-api-key",
 			"Fingerprint": "def456",
-			"Match": "sk_live_abcdefghijklmnopqrst"
+			"Match": "pk_test_xxxxxxxxxxxxxxxxxxxxqrst"
 		}
 	]`
 
@@ -83,7 +84,7 @@ func TestMaskSecret(t *testing.T) {
 		want  string
 	}{
 		{"AKIAIOSFODNN7EXAMPLE", "AKIA****MPLE"},
-		{"sk_live_abcdefghij", "sk_l****ghij"},
+		{"pk_test_yyyyyyyyyyghij", "pk_t****ghij"},
 		{"short", "****"},
 		{"12345678", "****"},
 		{"123456789", "1234****6789"},
@@ -100,9 +101,71 @@ func TestMaskSecret(t *testing.T) {
 	}
 }
 
+func TestNameAndID(t *testing.T) {
+	p := New()
+	if p.Name() != "Secrets" {
+		t.Errorf("expected Name='Secrets', got %q", p.Name())
+	}
+	if p.ID() != "secrets" {
+		t.Errorf("expected ID='secrets', got %q", p.ID())
+	}
+}
+
+func TestIsTestOrMockFile(t *testing.T) {
+	tests := []struct {
+		path string
+		want bool
+	}{
+		// Go test files
+		{"internal/check/secrets_test.go", true},
+		{"handler_test.go", true},
+		// JS/TS test files
+		{"src/utils.test.ts", true},
+		{"src/utils.spec.ts", true},
+		{"src/components/Button.test.tsx", true},
+		{"src/hooks/useAuth.spec.tsx", true},
+		{"src/utils.test.js", true},
+		{"src/utils.spec.mjs", true},
+		{"src/utils.test.cjs", true},
+		// Mock/fixture/stub patterns
+		{"src/mocks/database.mock.ts", true},
+		{"src/fixtures/users.fixture.ts", true},
+		{"src/stubs/api.stub.js", true},
+		{"src/components/Button.stories.tsx", true},
+		{"src/components/Button.story.tsx", true},
+		// Directory patterns
+		{"src/__tests__/utils.test.ts", true},
+		{"src/__mocks__/fs.mock.ts", true},
+		// Case insensitive
+		{"SRC/UTILS.TEST.TS", true},
+		// Non-test files (negatives)
+		{"src/config.ts", false},
+		{"src/index.js", false},
+		{"src/utils.ts", false},
+		{"internal/check/secrets.go", false},
+		{".env.local", false},
+		{"src/middleware.ts", false},
+		{"src/types/api.d.ts", false},
+		{"src/constants.ts", false},
+		// Edge cases
+		{"testing.ts", false},
+		{"spec-helper.js", false},
+		{"test-utils.ts", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			got := isTestOrMockFile(tt.path)
+			if got != tt.want {
+				t.Errorf("isTestOrMockFile(%q) = %v, want %v", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestIssueFieldsFromGitleaksResult(t *testing.T) {
-	// Verify the issue construction logic
-	r := gitleaksResult{
+	// Test production file — should be blocker vulnerability
+	prodResult := gitleaksResult{
 		Description: "AWS Secret Key",
 		StartLine:   15,
 		StartColumn: 5,
@@ -111,43 +174,81 @@ func TestIssueFieldsFromGitleaksResult(t *testing.T) {
 		Match:       "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	}
 
-	maskedMatch := maskSecret(r.Match)
-	issue := domain.Issue{
-		RuleID:   "secret/" + r.RuleID,
-		Message:  r.Description + ": " + maskedMatch,
-		File:     r.File,
-		Line:     r.StartLine,
-		Column:   r.StartColumn,
+	prodMasked := maskSecret(prodResult.Match)
+	prodIssue := domain.Issue{
+		RuleID:   "secret/" + prodResult.RuleID,
+		Message:  prodResult.Description + ": " + prodMasked,
+		File:     prodResult.File,
+		Line:     prodResult.StartLine,
+		Column:   prodResult.StartColumn,
 		Severity: domain.SeverityBlocker,
 		Type:     domain.IssueTypeVulnerability,
 		Source:   "gitleaks",
 		Effort:   "15min",
 	}
 
-	if issue.RuleID != "secret/aws-secret-access-key" {
-		t.Errorf("expected ruleID='secret/aws-secret-access-key', got %q", issue.RuleID)
+	if prodIssue.Severity != domain.SeverityBlocker {
+		t.Errorf("prod file: expected severity=blocker, got %q", prodIssue.Severity)
 	}
-	if issue.Severity != domain.SeverityBlocker {
-		t.Errorf("expected severity=blocker, got %q", issue.Severity)
+	if prodIssue.Type != domain.IssueTypeVulnerability {
+		t.Errorf("prod file: expected type=vulnerability, got %q", prodIssue.Type)
 	}
-	if issue.Type != domain.IssueTypeVulnerability {
-		t.Errorf("expected type=vulnerability, got %q", issue.Type)
+	if prodIssue.Line != 15 {
+		t.Errorf("prod file: expected line=15, got %d", prodIssue.Line)
 	}
-	if issue.Line != 15 {
-		t.Errorf("expected line=15, got %d", issue.Line)
+	if len(prodIssue.Message) > 0 && prodIssue.Message == prodResult.Description+": "+prodResult.Match {
+		t.Error("prod file: secret should be masked in the message")
 	}
-	// Verify the match is masked in the message
-	if len(issue.Message) > 0 && issue.Message == r.Description+": "+r.Match {
-		t.Error("secret should be masked in the message")
-	}
-}
 
-func TestNameAndID(t *testing.T) {
-	p := New()
-	if p.Name() != "Secrets" {
-		t.Errorf("expected Name='Secrets', got %q", p.Name())
+	// Test file — should be downgraded to info code_smell
+	testResult := gitleaksResult{
+		Description: "Stripe API Key",
+		StartLine:   42,
+		StartColumn: 10,
+		File:        "src/services/payment.test.ts",
+		RuleID:      "stripe-access-token",
+		Match:       "pk_test_xxxxxxxxxxxxxxxxxxxxxxxxxx",
 	}
-	if p.ID() != "secrets" {
-		t.Errorf("expected ID='secrets', got %q", p.ID())
+
+	testRelPath := "src/services/payment.test.ts"
+	isTest := isTestOrMockFile(testRelPath)
+	if !isTest {
+		t.Fatal("expected .test.ts to be detected as test file")
+	}
+
+	testMasked := maskSecret(testResult.Match)
+	testSeverity := domain.SeverityBlocker
+	testType := domain.IssueTypeVulnerability
+	testRemediation := domain.SecretRemediation("secret/" + testResult.RuleID)
+	if isTest {
+		testSeverity = domain.SeverityInfo
+		testType = domain.IssueTypeCodeSmell
+		testRemediation = "Hardcoded secret in test file. Replace with environment variables, test fixtures, or mock services. Add this file to .gitleaksignore if the secret is intentionally fake."
+	}
+
+	testIssue := domain.Issue{
+		RuleID:      "secret/" + testResult.RuleID,
+		Message:     testResult.Description + ": " + testMasked,
+		File:        testRelPath,
+		Line:        testResult.StartLine,
+		Column:      testResult.StartColumn,
+		Severity:    testSeverity,
+		Type:        testType,
+		Source:      "gitleaks",
+		Effort:      "15min",
+		Remediation: testRemediation,
+	}
+
+	if testIssue.Severity != domain.SeverityInfo {
+		t.Errorf("test file: expected severity=info, got %q", testIssue.Severity)
+	}
+	if testIssue.Type != domain.IssueTypeCodeSmell {
+		t.Errorf("test file: expected type=code_smell, got %q", testIssue.Type)
+	}
+	if testIssue.Line != 42 {
+		t.Errorf("test file: expected line=42, got %d", testIssue.Line)
+	}
+	if !strings.Contains(testIssue.Remediation, "test file") {
+		t.Errorf("test file: expected remediation to mention 'test file', got %q", testIssue.Remediation)
 	}
 }
