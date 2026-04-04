@@ -159,15 +159,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		maskedMatch := maskSecret(r.Match)
 
 		issues = append(issues, domain.Issue{
-			RuleID:   "secret/" + r.RuleID,
-			Message:  r.Description + ": " + maskedMatch,
-			File:     relPath,
-			Line:     r.StartLine,
-			Column:   r.StartColumn,
-			Severity: domain.SeverityBlocker,
-			Type:     domain.IssueTypeVulnerability,
-			Source:   "gitleaks",
-			Effort:   "15min",
+			RuleID:      "secret/" + r.RuleID,
+			Message:     r.Description + ": " + maskedMatch,
+			File:        relPath,
+			Line:        r.StartLine,
+			Column:      r.StartColumn,
+			Severity:    domain.SeverityBlocker,
+			Type:        domain.IssueTypeVulnerability,
+			Source:      "gitleaks",
+			Effort:      "15min",
+			Remediation: domain.SecretRemediation("secret/" + r.RuleID),
 		})
 	}
 

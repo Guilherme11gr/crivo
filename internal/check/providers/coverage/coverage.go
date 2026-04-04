@@ -256,15 +256,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 			fileIssues = append(fileIssues, fileIssue{
 				uncovered: uncovered,
 				issue: domain.Issue{
-					RuleID:   "low-coverage",
-					Message:  fmt.Sprintf("%.1f%% lines (%d/%d covered, %d to cover)", entry.Lines.Pct, entry.Lines.Covered, entry.Lines.Total, uncovered),
-					File:     relPath,
-					Line:     1,
-					Column:   1,
-					Severity: severityForCoverage(entry.Lines.Pct, cfg.Coverage.Lines),
-					Type:     domain.IssueTypeCodeSmell,
-					Source:   "coverage",
-					Effort:   fmt.Sprintf("%dmin", uncovered*2),
+					RuleID:      "low-coverage",
+					Message:     fmt.Sprintf("%.1f%% lines (%d/%d covered, %d to cover)", entry.Lines.Pct, entry.Lines.Covered, entry.Lines.Total, uncovered),
+					File:        relPath,
+					Line:        1,
+					Column:      1,
+					Severity:    severityForCoverage(entry.Lines.Pct, cfg.Coverage.Lines),
+					Type:        domain.IssueTypeCodeSmell,
+					Source:      "coverage",
+					Effort:      fmt.Sprintf("%dmin", uncovered*2),
+					Remediation: domain.CoverageRemediation(""),
 				},
 			})
 		}

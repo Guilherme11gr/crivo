@@ -201,15 +201,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		second = filepath.ToSlash(second)
 
 		issues = append(issues, domain.Issue{
-			RuleID:   "duplication",
-			Message:  fmt.Sprintf("Duplicated %d lines with %s:%d", dup.Lines, second, dup.SecondFile.StartLoc.Line),
-			File:     first,
-			Line:     dup.FirstFile.StartLoc.Line,
-			Column:   1,
-			Severity: domain.SeverityMinor,
-			Type:     domain.IssueTypeCodeSmell,
-			Source:   "jscpd",
-			Effort:   fmt.Sprintf("%dmin", dup.Lines*2),
+			RuleID:      "duplication",
+			Message:     fmt.Sprintf("Duplicated %d lines with %s:%d", dup.Lines, second, dup.SecondFile.StartLoc.Line),
+			File:        first,
+			Line:        dup.FirstFile.StartLoc.Line,
+			Column:      1,
+			Severity:    domain.SeverityMinor,
+			Type:        domain.IssueTypeCodeSmell,
+			Source:      "jscpd",
+			Effort:      fmt.Sprintf("%dmin", dup.Lines*2),
+			Remediation: domain.DuplicationRemediation("duplication"),
 		})
 	}
 
@@ -243,15 +244,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 				sev = domain.SeverityMinor
 			}
 			issues = append(issues, domain.Issue{
-				RuleID:   "semantic-duplication",
-				Message:  fmt.Sprintf("%s: %s:%d (%s) ≈ %s:%d (%s)", label, clone.A.File, clone.A.Line, clone.A.Name, clone.B.File, clone.B.Line, clone.B.Name),
-				File:     clone.A.File,
-				Line:     clone.A.Line,
-				Column:   1,
-				Severity: sev,
-				Type:     domain.IssueTypeCodeSmell,
-				Source:   "semantic",
-				Effort:   fmt.Sprintf("%dmin", clone.A.BodyLines*3),
+				RuleID:      "semantic-duplication",
+				Message:     fmt.Sprintf("%s: %s:%d (%s) ≈ %s:%d (%s)", label, clone.A.File, clone.A.Line, clone.A.Name, clone.B.File, clone.B.Line, clone.B.Name),
+				File:        clone.A.File,
+				Line:        clone.A.Line,
+				Column:      1,
+				Severity:    sev,
+				Type:        domain.IssueTypeCodeSmell,
+				Source:      "semantic",
+				Effort:      fmt.Sprintf("%dmin", clone.A.BodyLines*3),
+				Remediation: domain.DuplicationRemediation("semantic-duplication"),
 			})
 
 			details = append(details, fmt.Sprintf("[semantic] %s:%d %s ≈ %s:%d %s (%.0f%%)",

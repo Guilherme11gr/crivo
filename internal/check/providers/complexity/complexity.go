@@ -171,15 +171,16 @@ func (p *Provider) buildResult(output astOutput, threshold int, method string) *
 	var details []string
 	for _, fn := range violations {
 		issues = append(issues, domain.Issue{
-			RuleID:   "cognitive-complexity",
-			Message:  fmt.Sprintf("Function %q has cognitive complexity of %d (max: %d)", fn.Name, fn.Complexity, threshold),
-			File:     fn.File,
-			Line:     fn.Line,
-			Column:   1,
-			Severity: severityForComplexity(fn.Complexity, threshold),
-			Type:     domain.IssueTypeCodeSmell,
-			Source:   "complexity-" + method,
-			Effort:   fmt.Sprintf("%dmin", fn.Complexity*3),
+			RuleID:      "cognitive-complexity",
+			Message:     fmt.Sprintf("Function %q has cognitive complexity of %d (max: %d)", fn.Name, fn.Complexity, threshold),
+			File:        fn.File,
+			Line:        fn.Line,
+			Column:      1,
+			Severity:    severityForComplexity(fn.Complexity, threshold),
+			Type:        domain.IssueTypeCodeSmell,
+			Source:      "complexity-" + method,
+			Effort:      fmt.Sprintf("%dmin", fn.Complexity*3),
+			Remediation: domain.ComplexityRemediation(""),
 		})
 		details = append(details, fmt.Sprintf("%s:%d %s — complexity %d", fn.File, fn.Line, fn.Name, fn.Complexity))
 	}

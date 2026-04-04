@@ -77,15 +77,16 @@ func matchBanImport(rule CompiledRule, filePath string, lines []string) []domain
 				loc := re.FindStringIndex(line)
 				if loc != nil {
 					issues = append(issues, domain.Issue{
-						RuleID:   rule.Raw.ID,
-						Message:  rule.Raw.Message,
-						File:     filePath,
-						Line:     lineNum + 1,
-						Column:   loc[0] + 1,
-						Severity: rule.Severity,
-						Type:     domain.IssueTypeCodeSmell,
-						Source:   "custom-rules",
-						Effort:   "10min",
+						RuleID:      rule.Raw.ID,
+						Message:     rule.Raw.Message,
+						File:        filePath,
+						Line:        lineNum + 1,
+						Column:      loc[0] + 1,
+						Severity:    rule.Severity,
+						Type:        domain.IssueTypeCodeSmell,
+						Source:      "custom-rules",
+						Effort:      "10min",
+						Remediation: domain.CustomRuleRemediation("ban-import", rule.Raw.Message),
 					})
 				}
 			}
@@ -111,15 +112,16 @@ func matchBanPattern(rule CompiledRule, filePath string, lines []string) []domai
 		loc := rule.PatternRe.FindStringIndex(line)
 		if loc != nil {
 			issues = append(issues, domain.Issue{
-				RuleID:   rule.Raw.ID,
-				Message:  rule.Raw.Message,
-				File:     filePath,
-				Line:     lineNum + 1,
-				Column:   loc[0] + 1,
-				Severity: rule.Severity,
-				Type:     domain.IssueTypeCodeSmell,
-				Source:   "custom-rules",
-				Effort:   "10min",
+				RuleID:      rule.Raw.ID,
+				Message:     rule.Raw.Message,
+				File:        filePath,
+				Line:        lineNum + 1,
+				Column:      loc[0] + 1,
+				Severity:    rule.Severity,
+				Type:        domain.IssueTypeCodeSmell,
+				Source:      "custom-rules",
+				Effort:      "10min",
+				Remediation: domain.CustomRuleRemediation("ban-pattern", rule.Raw.Message),
 			})
 		}
 	}
@@ -147,14 +149,15 @@ func matchRequireImport(rule CompiledRule, filePath string, content string) []do
 
 	return []domain.Issue{
 		{
-			RuleID:   rule.Raw.ID,
-			Message:  rule.Raw.Message,
-			File:     filePath,
-			Line:     1,
-			Severity: rule.Severity,
-			Type:     domain.IssueTypeCodeSmell,
-			Source:   "custom-rules",
-			Effort:   "10min",
+			RuleID:      rule.Raw.ID,
+			Message:     rule.Raw.Message,
+			File:        filePath,
+			Line:        1,
+			Severity:    rule.Severity,
+			Type:        domain.IssueTypeCodeSmell,
+			Source:      "custom-rules",
+			Effort:      "10min",
+			Remediation: domain.CustomRuleRemediation("require-import", rule.Raw.Message),
 		},
 	}
 }
@@ -167,14 +170,15 @@ func matchEnforcePattern(rule CompiledRule, filePath string, content string) []d
 
 	return []domain.Issue{
 		{
-			RuleID:   rule.Raw.ID,
-			Message:  rule.Raw.Message,
-			File:     filePath,
-			Line:     1,
-			Severity: rule.Severity,
-			Type:     domain.IssueTypeCodeSmell,
-			Source:   "custom-rules",
-			Effort:   "15min",
+			RuleID:      rule.Raw.ID,
+			Message:     rule.Raw.Message,
+			File:        filePath,
+			Line:        1,
+			Severity:    rule.Severity,
+			Type:        domain.IssueTypeCodeSmell,
+			Source:      "custom-rules",
+			Effort:      "15min",
+			Remediation: domain.CustomRuleRemediation("enforce-pattern", rule.Raw.Message),
 		},
 	}
 }
@@ -191,14 +195,15 @@ func matchMaxLines(rule CompiledRule, filePath string, lines []string) []domain.
 
 	return []domain.Issue{
 		{
-			RuleID:   rule.Raw.ID,
-			Message:  fmt.Sprintf("%s (found: %d lines, max: %d)", rule.Raw.Message, len(lines), rule.MaxLines),
-			File:     filePath,
-			Line:     1,
-			Severity: rule.Severity,
-			Type:     domain.IssueTypeCodeSmell,
-			Source:   "custom-rules",
-			Effort:   "20min",
+			RuleID:      rule.Raw.ID,
+			Message:     fmt.Sprintf("%s (found: %d lines, max: %d)", rule.Raw.Message, len(lines), rule.MaxLines),
+			File:        filePath,
+			Line:        1,
+			Severity:    rule.Severity,
+			Type:        domain.IssueTypeCodeSmell,
+			Source:      "custom-rules",
+			Effort:      "20min",
+			Remediation: domain.CustomRuleRemediation("max-lines", rule.Raw.Message),
 		},
 	}
 }
@@ -244,14 +249,15 @@ func matchBanDependency(rule CompiledRule, projectDir string) []domain.Issue {
 			// Find the line number
 			line := findLineInJSON(lines, banned)
 			issues = append(issues, domain.Issue{
-				RuleID:   rule.Raw.ID,
-				Message:  fmt.Sprintf("%s (found: %s@%s)", rule.Raw.Message, banned, allDeps[banned]),
-				File:     "package.json",
-				Line:     line,
-				Severity: rule.Severity,
-				Type:     domain.IssueTypeCodeSmell,
-				Source:   "custom-rules",
-				Effort:   "15min",
+				RuleID:      rule.Raw.ID,
+				Message:     fmt.Sprintf("%s (found: %s@%s)", rule.Raw.Message, banned, allDeps[banned]),
+				File:        "package.json",
+				Line:        line,
+				Severity:    rule.Severity,
+				Type:        domain.IssueTypeCodeSmell,
+				Source:      "custom-rules",
+				Effort:      "15min",
+				Remediation: domain.CustomRuleRemediation("ban-dependency", rule.Raw.Message),
 			})
 		}
 	}
@@ -439,15 +445,16 @@ func matchSemgrep(ctx context.Context, rule CompiledRule, projectDir string, fil
 		}
 
 		issues = append(issues, domain.Issue{
-			RuleID:   rule.Raw.ID,
-			Message:  rule.Raw.Message,
-			File:     relPath,
-			Line:     r.Start.Line,
-			Column:   r.Start.Col,
-			Severity: rule.Severity,
-			Type:     domain.IssueTypeCodeSmell,
-			Source:   "custom-rules",
-			Effort:   "15min",
+			RuleID:      rule.Raw.ID,
+			Message:     rule.Raw.Message,
+			File:        relPath,
+			Line:        r.Start.Line,
+			Column:      r.Start.Col,
+			Severity:    rule.Severity,
+			Type:        domain.IssueTypeCodeSmell,
+			Source:      "custom-rules",
+			Effort:      "15min",
+			Remediation: domain.CustomRuleRemediation("semgrep", rule.Raw.Message),
 		})
 	}
 
@@ -624,15 +631,16 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 			}
 
 			allIssues = append(allIssues, domain.Issue{
-				RuleID:   rule.Raw.ID,
-				Message:  rule.Raw.Message,
-				File:     relPath,
-				Line:     r.Start.Line,
-				Column:   r.Start.Col,
-				Severity: rule.Severity,
-				Type:     domain.IssueTypeCodeSmell,
-				Source:   "custom-rules",
-				Effort:   "15min",
+				RuleID:      rule.Raw.ID,
+				Message:     rule.Raw.Message,
+				File:        relPath,
+				Line:        r.Start.Line,
+				Column:      r.Start.Col,
+				Severity:    rule.Severity,
+				Type:        domain.IssueTypeCodeSmell,
+				Source:      "custom-rules",
+				Effort:      "15min",
+				Remediation: domain.CustomRuleRemediation("advisory", rule.Raw.Message),
 			})
 		}
 	}

@@ -185,15 +185,16 @@ func parseKnipOutput(output string, projectDir string) ([]domain.Issue, int, int
 			message = "Dependency is not imported: " + trimmed
 			// deps don't have file paths
 			issues = append(issues, domain.Issue{
-				RuleID:   ruleID,
-				Message:  message,
-				File:     "package.json",
-				Line:     1,
-				Column:   1,
-				Severity: severity,
-				Type:     issueType,
-				Source:   "knip",
-				Effort:   "5min",
+				RuleID:      ruleID,
+				Message:     message,
+				File:        "package.json",
+				Line:        1,
+				Column:      1,
+				Severity:    severity,
+				Type:        issueType,
+				Source:      "knip",
+				Effort:      "5min",
+				Remediation: domain.DeadcodeRemediation(ruleID, message),
 			})
 			continue
 		default:
@@ -213,15 +214,16 @@ func parseKnipOutput(output string, projectDir string) ([]domain.Issue, int, int
 			relPath = filepath.ToSlash(relPath)
 
 			issues = append(issues, domain.Issue{
-				RuleID:   ruleID,
-				Message:  message,
-				File:     relPath,
-				Line:     lineNum,
-				Column:   1,
-				Severity: severity,
-				Type:     issueType,
-				Source:   "knip",
-				Effort:   "5min",
+				RuleID:      ruleID,
+				Message:     message,
+				File:        relPath,
+				Line:        lineNum,
+				Column:      1,
+				Severity:    severity,
+				Type:        issueType,
+				Source:      "knip",
+				Effort:      "5min",
+				Remediation: domain.DeadcodeRemediation(ruleID, message),
 			})
 		}
 	}

@@ -41,15 +41,16 @@ type CheckJSON struct {
 }
 
 type IssueJSON struct {
-	RuleID   string          `json:"ruleId"`
-	Message  string          `json:"message"`
-	File     string          `json:"file"`
-	Line     int             `json:"line"`
-	Column   int             `json:"column"`
-	Severity domain.Severity `json:"severity"`
-	Type     domain.IssueType `json:"type"`
-	Source   string          `json:"source"`
-	Effort   string          `json:"effort"`
+	RuleID      string          `json:"ruleId"`
+	Message     string          `json:"message"`
+	File        string          `json:"file"`
+	Line        int             `json:"line"`
+	Column      int             `json:"column"`
+	Severity    domain.Severity `json:"severity"`
+	Type        domain.IssueType `json:"type"`
+	Source      string          `json:"source"`
+	Effort      string          `json:"effort"`
+	Remediation string          `json:"remediation,omitempty"`
 }
 
 type SummaryJSON struct {
@@ -111,15 +112,16 @@ func toJSONReport(result *domain.AnalysisResult) JSONReport {
 
 		for _, issue := range check.Issues {
 			cj.Issues = append(cj.Issues, IssueJSON{
-				RuleID:   issue.RuleID,
-				Message:  issue.Message,
-				File:     issue.File,
-				Line:     issue.Line,
-				Column:   issue.Column,
-				Severity: issue.Severity,
-				Type:     issue.Type,
-				Source:   issue.Source,
-				Effort:   issue.Effort,
+				RuleID:      issue.RuleID,
+				Message:     issue.Message,
+				File:        issue.File,
+				Line:        issue.Line,
+				Column:      issue.Column,
+				Severity:    issue.Severity,
+				Type:        issue.Type,
+				Source:      issue.Source,
+				Effort:      issue.Effort,
+				Remediation: issue.Remediation,
 			})
 		}
 
