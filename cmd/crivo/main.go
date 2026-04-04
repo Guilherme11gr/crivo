@@ -446,13 +446,14 @@ func runInit() {
 	fmt.Println()
 	fmt.Println(color("  🚀 Initializing Quality Gate", cyan, bold))
 	fmt.Println()
+	fmt.Println(color("  🔍 Detecting project type...", cyan))
 
 	// Create .qualitygate.yaml
 	configPath := filepath.Join(projectDir, ".qualitygate.yaml")
 	if _, err := os.Stat(configPath); err == nil {
 		fmt.Println(color("  ⏭️  .qualitygate.yaml already exists, skipping", yellow))
 	} else {
-		data, err := config.GenerateDefault()
+		data, err := config.GenerateDetected(projectDir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			os.Exit(1)
@@ -461,7 +462,8 @@ func runInit() {
 			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 			os.Exit(1)
 		}
-		fmt.Println(color("  ✅ Created .qualitygate.yaml", green))
+		summary := config.BuildDetectionSummary(projectDir)
+		fmt.Println(color(fmt.Sprintf("  ✅ Created .qualitygate.yaml (detected: %s)", summary), green))
 	}
 
 	// Create GitHub Actions workflow
