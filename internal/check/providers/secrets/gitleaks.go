@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/guilherme11gr/crivo/internal/check"
@@ -85,7 +86,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		"--report-format=json",
 		"--report-path="+reportPath,
 		"--no-git",
-		"--quiet",
+		"--no-banner",
 	)
 
 	var stdout, stderr bytes.Buffer
@@ -158,26 +159,45 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		// Mask the match for safety
 		maskedMatch := maskSecret(r.Match)
 
+		// Downgrade severity for test/mock/fixture files
+		isTestFile := isTestOrMockFile(relPath)
+		severity := domain.SeverityBlocker
+		issueType := domain.IssueTypeVulnerability
+		remediation := domain.SecretRemediation("secret/" + r.RuleID)
+		if isTestFile {
+			severity = domain.SeverityInfo
+			issueType = domain.IssueTypeCodeSmell
+			remediation = "Hardcoded secret in test file. Replace with environment variables, test fixtures, or mock services. Add this file to .gitleaksignore if the secret is intentionally fake."
+		}
+
 		issues = append(issues, domain.Issue{
-			RuleID:   "secret/" + r.RuleID,
-			Message:  r.Description + ": " + maskedMatch,
-			File:     relPath,
-			Line:     r.StartLine,
-			Column:   r.StartColumn,
-			Severity: domain.SeverityBlocker,
-			Type:     domain.IssueTypeVulnerability,
-			Source:   "gitleaks",
-			Effort:   "15min",
+			RuleID:      "secret/" + r.RuleID,
+			Message:     r.Description + ": " + maskedMatch,
+			File:        relPath,
+			Line:        r.StartLine,
+			Column:      r.StartColumn,
+			Severity:    severity,
+			Type:        issueType,
+			Source:      "gitleaks",
+			Effort:      "15min",
+			Remediation: remediation,
 		})
 	}
 
 	count := len(issues)
+	// Count only non-info secrets for policy blocking (test file secrets are downgraded to info)
+	realSecretCount := 0
+	for _, iss := range issues {
+		if iss.Severity != domain.SeverityInfo {
+			realSecretCount++
+		}
+	}
+
 	summary := strconv.Itoa(count) + " secret"
 	if count != 1 {
 		summary += "s"
 	}
 	summary += " detected"
-
 	details := make([]string, 0, min(count, 20))
 	for i, issue := range issues {
 		if i >= 20 {
@@ -195,7 +215,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		Details: details,
 		Duration: duration,
 		Metrics: map[string]float64{
-			"secrets": float64(count),
+			"secrets": float64(realSecretCount),
 		},
 	}, nil
 }
@@ -205,4 +225,45 @@ func maskSecret(s string) string {
 		return "****"
 	}
 	return s[:4] + "****" + s[len(s)-4:]
+}
+
+// isTestOrMockFile checks if a file path looks like a test, mock, or fixture file.
+// These are common patterns for non-production code where hardcoded secrets are expected.
+func isTestOrMockFile(path string) bool {
+	lower := strings.ToLower(path)
+
+	// Go test files: *_test.go
+	if strings.HasSuffix(lower, "_test.go") {
+		return true
+	}
+
+	// JS/TS test files: .test.ts, .spec.ts, .test.tsx, .spec.tsx, .test.js, .spec.js
+	testExts := []string{
+		".test.ts", ".spec.ts", ".test.tsx", ".spec.tsx",
+		".test.js", ".spec.js", ".test.mjs", ".spec.mjs",
+		".test.cjs", ".spec.cjs",
+	}
+	for _, ext := range testExts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+
+	// File patterns: *.mock.*, *.fixture.*, *.stub.*, *.stories.*, *.story.*
+	mockPatterns := []string{".mock.", ".fixture.", ".stub.", ".stories.", ".story."}
+	for _, pat := range mockPatterns {
+		if strings.Contains(lower, pat) {
+			return true
+		}
+	}
+
+	// Directory patterns: __tests__/, __mocks__/
+	dirPatterns := []string{"__tests__", "__mocks__"}
+	for _, pat := range dirPatterns {
+		if strings.Contains(lower, pat) {
+			return true
+		}
+	}
+
+	return false
 }

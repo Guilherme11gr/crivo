@@ -190,15 +190,16 @@ func parseTscOutput(output string, projectDir string) []domain.Issue {
 		file = filepath.ToSlash(file)
 
 		issues = append(issues, domain.Issue{
-			RuleID:   ruleID,
-			Message:  message,
-			File:     file,
-			Line:     lineNum,
-			Column:   col,
-			Severity: domain.SeverityMajor,
-			Type:     domain.IssueTypeBug,
-			Source:   "tsc",
-			Effort:   "10min",
+			RuleID:      ruleID,
+			Message:     message,
+			File:        file,
+			Line:        lineNum,
+			Column:      col,
+			Severity:    domain.SeverityMajor,
+			Type:        domain.IssueTypeBug,
+			Source:      "tsc",
+			Effort:      "10min",
+			Remediation: domain.TypescriptRemediation(ruleID),
 		})
 	}
 

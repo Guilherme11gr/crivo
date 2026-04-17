@@ -178,15 +178,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}
 
 		issues = append(issues, domain.Issue{
-			RuleID:   ruleID,
-			Message:  r.Extra.Message,
-			File:     relPath,
-			Line:     r.Start.Line,
-			Column:   r.Start.Col,
-			Severity: severity,
-			Type:     issueType,
-			Source:   "semgrep",
-			Effort:   effort,
+			RuleID:      ruleID,
+			Message:     r.Extra.Message,
+			File:        relPath,
+			Line:        r.Start.Line,
+			Column:      r.Start.Col,
+			Severity:    severity,
+			Type:        issueType,
+			Source:      "semgrep",
+			Effort:      effort,
+			Remediation: domain.SemgrepRemediation(ruleID),
 		})
 	}
 

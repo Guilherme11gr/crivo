@@ -32,8 +32,9 @@ type Issue struct {
 	Column   int       `json:"column"`
 	Severity Severity  `json:"severity"`
 	Type     IssueType `json:"type"`
-	Source   string    `json:"source"` // which provider found it
-	Effort   string    `json:"effort"` // estimated fix time e.g. "5min"
+	Source      string    `json:"source"`                // which provider found it
+	Effort      string    `json:"effort"`                // estimated fix time e.g. "5min"
+	Remediation string    `json:"remediation,omitempty"` // actionable fix hint for AI agents
 }
 
 // CheckStatus represents the outcome of a single check

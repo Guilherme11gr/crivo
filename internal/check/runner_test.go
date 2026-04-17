@@ -13,7 +13,11 @@ func TestIsCheckEnabled_HonorsCLIDisabledChecks(t *testing.T) {
 		t.Fatal("expected complexity to be disabled by CLI override")
 	}
 
-	if !isCheckEnabled("eslint", cfg, map[string]bool{"complexity": true}) {
-		t.Fatal("expected eslint to remain enabled")
+	if isCheckEnabled("eslint", cfg, map[string]bool{"complexity": true}) {
+		t.Fatal("expected eslint to always be disabled (deprecated)")
+	}
+
+	if !isCheckEnabled("coverage", cfg, map[string]bool{"complexity": true}) {
+		t.Fatal("expected coverage to remain enabled")
 	}
 }

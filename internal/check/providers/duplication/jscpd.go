@@ -182,10 +182,8 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		if i >= 10 {
 			break
 		}
-		first, _ := filepath.Rel(projectDir, dup.FirstFile.Name)
-		second, _ := filepath.Rel(projectDir, dup.SecondFile.Name)
-		first = filepath.ToSlash(first)
-		second = filepath.ToSlash(second)
+		first := normalizePath(projectDir, dup.FirstFile.Name)
+		second := normalizePath(projectDir, dup.SecondFile.Name)
 		details = append(details, fmt.Sprintf("%s:%d <-> %s:%d (%d lines)",
 			first, dup.FirstFile.StartLoc.Line,
 			second, dup.SecondFile.StartLoc.Line,
@@ -195,21 +193,21 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	// Create issues for each duplicate
 	var issues []domain.Issue
 	for _, dup := range report.Duplicates {
-		first, _ := filepath.Rel(projectDir, dup.FirstFile.Name)
-		second, _ := filepath.Rel(projectDir, dup.SecondFile.Name)
-		first = filepath.ToSlash(first)
-		second = filepath.ToSlash(second)
+		// Normalize paths: jscpd may return absolute or relative paths
+		first := normalizePath(projectDir, dup.FirstFile.Name)
+		second := normalizePath(projectDir, dup.SecondFile.Name)
 
 		issues = append(issues, domain.Issue{
-			RuleID:   "duplication",
-			Message:  fmt.Sprintf("Duplicated %d lines with %s:%d", dup.Lines, second, dup.SecondFile.StartLoc.Line),
-			File:     first,
-			Line:     dup.FirstFile.StartLoc.Line,
-			Column:   1,
-			Severity: domain.SeverityMinor,
-			Type:     domain.IssueTypeCodeSmell,
-			Source:   "jscpd",
-			Effort:   fmt.Sprintf("%dmin", dup.Lines*2),
+			RuleID:      "duplication",
+			Message:     fmt.Sprintf("Duplicated %d lines with %s:%d", dup.Lines, second, dup.SecondFile.StartLoc.Line),
+			File:        first,
+			Line:        dup.FirstFile.StartLoc.Line,
+			Column:      1,
+			Severity:    domain.SeverityMinor,
+			Type:        domain.IssueTypeCodeSmell,
+			Source:      "jscpd",
+			Effort:      fmt.Sprintf("%dmin", dup.Lines*2),
+			Remediation: domain.DuplicationRemediation("duplication"),
 		})
 	}
 
@@ -243,15 +241,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 				sev = domain.SeverityMinor
 			}
 			issues = append(issues, domain.Issue{
-				RuleID:   "semantic-duplication",
-				Message:  fmt.Sprintf("%s: %s:%d (%s) ≈ %s:%d (%s)", label, clone.A.File, clone.A.Line, clone.A.Name, clone.B.File, clone.B.Line, clone.B.Name),
-				File:     clone.A.File,
-				Line:     clone.A.Line,
-				Column:   1,
-				Severity: sev,
-				Type:     domain.IssueTypeCodeSmell,
-				Source:   "semantic",
-				Effort:   fmt.Sprintf("%dmin", clone.A.BodyLines*3),
+				RuleID:      "semantic-duplication",
+				Message:     fmt.Sprintf("%s: %s:%d (%s) ≈ %s:%d (%s)", label, clone.A.File, clone.A.Line, clone.A.Name, clone.B.File, clone.B.Line, clone.B.Name),
+				File:        clone.A.File,
+				Line:        clone.A.Line,
+				Column:      1,
+				Severity:    sev,
+				Type:        domain.IssueTypeCodeSmell,
+				Source:      "semantic",
+				Effort:      fmt.Sprintf("%dmin", clone.A.BodyLines*3),
+				Remediation: domain.DuplicationRemediation("semantic-duplication"),
 			})
 
 			details = append(details, fmt.Sprintf("[semantic] %s:%d %s ≈ %s:%d %s (%.0f%%)",
@@ -288,5 +287,22 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 			"semantic_clones": float64(semanticCloneCount),
 		},
 	}, nil
+}
+
+// normalizePath converts a path (absolute or relative) to a relative path from projectDir.
+// jscpd may return either absolute or relative paths depending on the OS and version.
+func normalizePath(projectDir, p string) string {
+	if p == "" {
+		return ""
+	}
+	// If relative, make absolute first so filepath.Rel works correctly
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(projectDir, p)
+	}
+	rel, err := filepath.Rel(projectDir, p)
+	if err != nil || rel == "" {
+		return filepath.ToSlash(filepath.Base(p))
+	}
+	return filepath.ToSlash(rel)
 }
 
