@@ -152,3 +152,34 @@ func TestEvaluateQualityGate_ReleaseBlocksDuplication(t *testing.T) {
 		t.Fatal("expected duplication condition to fail")
 	}
 }
+
+func TestEvaluateQualityGate_DuplicationConditionUsesPercentageThreshold(t *testing.T) {
+	result := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:     "duplication",
+				Status: domain.StatusFailed,
+				Metrics: map[string]float64{
+					"percentage":      1.2,
+					"semantic_clones": 20,
+				},
+			},
+		},
+	}
+
+	EvaluateQualityGate(result, "release")
+
+	if result.Status != domain.GatePassed {
+		t.Fatalf("status = %s, want passed", result.Status)
+	}
+	if len(result.Conditions) != 1 {
+		t.Fatalf("conditions = %d, want 1", len(result.Conditions))
+	}
+	condition := result.Conditions[0]
+	if condition.Metric != "duplication_pct" {
+		t.Fatalf("metric = %q, want duplication_pct", condition.Metric)
+	}
+	if !condition.Passed {
+		t.Fatalf("duplication_pct condition failed with actual %.1f under threshold %.1f", condition.Actual, condition.Threshold)
+	}
+}

@@ -1,6 +1,6 @@
 {
   "name": "crivo",
-  "version": "3.4.1",
+  "version": "3.4.2",
   "description": "Local quality gate for AI-agent coding workflows and CI. Runs core checks, consolidates output, and enforces project-specific rules.",
   "keywords": [
     "quality",

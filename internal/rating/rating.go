@@ -231,7 +231,7 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 						Operator:  "lt",
 						Threshold: 5,
 						Actual:    pct,
-						Passed:    check.Status != domain.StatusFailed,
+						Passed:    pct < 5,
 					})
 				}
 			}

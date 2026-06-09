@@ -32,7 +32,7 @@ import (
 	"github.com/guilherme11gr/crivo/internal/tui"
 )
 
-var version = "3.4.1"
+var version = "3.4.2"
 
 const helpText = `
   crivo — Local quality gate for agent coding workflows and CI
