@@ -77,7 +77,7 @@ As políticas disponíveis são:
 
 | Política | Comportamento |
 | --- | --- |
-| `release` | bloqueia erros de tipo em produção, secrets e custom rules bloqueantes |
+| `release` | bloqueia erros de tipo em produção, duplicação, secrets e custom rules bloqueantes |
 | `strict` | bloqueia também cobertura, duplicação e outros checks configurados |
 | `informational` | nunca bloqueia; apenas reporta |
 
@@ -182,6 +182,22 @@ custom-rules:
 - Markdown: relatório legível para PRs.
 - SARIF: integração com GitHub Code Scanning.
 - TUI: dashboard local com `crivo run --tui`.
+
+## Contrato para agentes
+
+Exit codes:
+
+- `0`: gate passou ou a política atual é apenas informativa.
+- `1`: gate falhou ou algum erro impediu a análise.
+
+No modo `--json`, os campos mais importantes são:
+
+- `status`: `passed` ou `failed`.
+- `checks[]`: resultado normalizado de cada provider.
+- `checks[].issues[]`: findings acionáveis, com arquivo, linha, severidade, tipo e remediação quando disponível.
+- `conditions[]`: regras que decidiram se o gate passou.
+- `ratings`: notas A-E por dimensão.
+- `totalIssues`: contagem final após filtros como `--new-code`.
 
 ## Histórico
 

@@ -12,15 +12,15 @@ import (
 // newTestResult creates a realistic AnalysisResult for testing.
 func newTestResult() *domain.AnalysisResult {
 	return &domain.AnalysisResult{
-		Version:    "3.0.0",
-		ProjectDir: "/home/user/project",
-		Status:     domain.GatePassed,
-		Timestamp:  time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC),
+		Version:       "3.0.0",
+		ProjectDir:    "/home/user/project",
+		Status:        domain.GatePassed,
+		Timestamp:     time.Date(2026, 3, 24, 12, 0, 0, 0, time.UTC),
 		TotalDuration: 2500 * time.Millisecond,
 		TotalIssues:   3,
 		Ratings: map[string]domain.Rating{
-			"reliability":    domain.RatingA,
-			"security":       domain.RatingB,
+			"reliability":     domain.RatingA,
+			"security":        domain.RatingB,
 			"maintainability": domain.RatingA,
 		},
 		Conditions: []domain.QualityGateCondition{
@@ -327,8 +327,8 @@ func TestGenerateMarkdown_Footer(t *testing.T) {
 	result := newTestResult()
 	md := GenerateMarkdown(result)
 
-	if !strings.Contains(md, "quality-gate") {
-		t.Error("markdown footer should reference quality-gate")
+	if !strings.Contains(md, "crivo") {
+		t.Error("markdown footer should reference crivo")
 	}
 	if !strings.Contains(md, "Total time:") {
 		t.Error("markdown footer should contain total time")

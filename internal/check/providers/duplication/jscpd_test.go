@@ -160,6 +160,20 @@ func TestAnalyze_SourceDirNotFound(t *testing.T) {
 	}
 }
 
+func TestJscpdIgnoreArgs(t *testing.T) {
+	excludes := []string{"node_modules/", "dist/"}
+
+	v3Args := jscpdIgnoreArgs("3.5.10", excludes)
+	if len(v3Args) != 2 || v3Args[0] != "--ignore=node_modules/" || v3Args[1] != "--ignore=dist/" {
+		t.Fatalf("v3 args = %#v", v3Args)
+	}
+
+	v5Args := jscpdIgnoreArgs("cpd 5.0.5", excludes)
+	if len(v5Args) != 1 || v5Args[0] != "--ignore-pattern=node_modules/,dist/" {
+		t.Fatalf("v5 args = %#v", v5Args)
+	}
+}
+
 func TestNameAndID(t *testing.T) {
 	p := New()
 	if p.Name() != "Duplication" {
@@ -213,9 +227,9 @@ func TestNormalizePath(t *testing.T) {
 	projectDir := filepath.Join(string(filepath.Separator), "project")
 
 	tests := []struct {
-		name     string
-		path     string
-		want     string
+		name string
+		path string
+		want string
 	}{
 		{"empty path", "", ""},
 		{"relative path from project root", "src/utils.ts", "src/utils.ts"},

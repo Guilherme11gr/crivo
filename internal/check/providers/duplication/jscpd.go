@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/guilherme11gr/crivo/internal/check"
@@ -36,11 +37,11 @@ type jscpdDuplicate struct {
 }
 
 type jscpdFile struct {
-	Name      string `json:"name"`
-	Start     int    `json:"start"`
-	End       int    `json:"end"`
-	StartLoc  jscpdLoc `json:"startLoc"`
-	EndLoc    jscpdLoc `json:"endLoc"`
+	Name     string   `json:"name"`
+	Start    int      `json:"start"`
+	End      int      `json:"end"`
+	StartLoc jscpdLoc `json:"startLoc"`
+	EndLoc   jscpdLoc `json:"endLoc"`
 }
 
 type jscpdLoc struct {
@@ -94,20 +95,6 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	// Use forward slashes for jscpd compatibility on Windows
 	srcPath = filepath.ToSlash(srcPath)
 
-	args := []string{
-		"jscpd",
-		srcPath,
-		fmt.Sprintf("--min-lines=%d", cfg.Duplication.MinLines),
-		fmt.Sprintf("--min-tokens=%d", cfg.Duplication.MinTokens),
-		"--reporters=json",
-		"--output=" + filepath.ToSlash(reportDir),
-	}
-
-	// Add ignore patterns
-	for _, exc := range cfg.Exclude {
-		args = append(args, "--ignore="+exc)
-	}
-
 	npxBin := check.FindNpx()
 	if npxBin == "" {
 		return &domain.CheckResult{
@@ -118,6 +105,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 			Duration: time.Since(start),
 		}, nil
 	}
+
+	args := []string{
+		"jscpd",
+		srcPath,
+		fmt.Sprintf("--min-lines=%d", cfg.Duplication.MinLines),
+		fmt.Sprintf("--min-tokens=%d", cfg.Duplication.MinTokens),
+		"--reporters=json",
+		"--output=" + filepath.ToSlash(reportDir),
+	}
+	args = append(args, jscpdIgnoreArgs(jscpdVersion(ctx, npxBin, projectDir), cfg.Exclude)...)
 
 	cmd := exec.CommandContext(ctx, npxBin, args...)
 	cmd.Dir = projectDir
@@ -274,12 +271,12 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 
 	return &domain.CheckResult{
-		Name:    p.Name(),
-		ID:      p.ID(),
-		Status:  status,
-		Summary: fmt.Sprintf("%.1f%% (max: %.1f%%)%s", pct, cfg.Duplication.Threshold, semanticStr),
-		Issues:  issues,
-		Details: details,
+		Name:     p.Name(),
+		ID:       p.ID(),
+		Status:   status,
+		Summary:  fmt.Sprintf("%.1f%% (max: %.1f%%)%s", pct, cfg.Duplication.Threshold, semanticStr),
+		Issues:   issues,
+		Details:  details,
 		Duration: duration,
 		Metrics: map[string]float64{
 			"percentage":      pct,
@@ -287,6 +284,35 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 			"semantic_clones": float64(semanticCloneCount),
 		},
 	}, nil
+}
+
+func jscpdVersion(ctx context.Context, npxBin, projectDir string) string {
+	cmd := exec.CommandContext(ctx, npxBin, "jscpd", "--version")
+	cmd.Dir = projectDir
+	cmd.Env = check.NodeEnv()
+
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func jscpdIgnoreArgs(version string, excludes []string) []string {
+	if len(excludes) == 0 {
+		return nil
+	}
+
+	// jscpd v5 rewrote the CLI as cpd and renamed --ignore to --ignore-pattern.
+	if strings.HasPrefix(strings.TrimSpace(version), "cpd 5.") {
+		return []string{"--ignore-pattern=" + strings.Join(excludes, ",")}
+	}
+
+	args := make([]string, 0, len(excludes))
+	for _, exc := range excludes {
+		args = append(args, "--ignore="+exc)
+	}
+	return args
 }
 
 // normalizePath converts a path (absolute or relative) to a relative path from projectDir.
@@ -305,4 +331,3 @@ func normalizePath(projectDir, p string) string {
 	}
 	return filepath.ToSlash(rel)
 }
-

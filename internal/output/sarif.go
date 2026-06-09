@@ -32,10 +32,10 @@ type sarifDriver struct {
 }
 
 type sarifRule struct {
-	ID               string           `json:"id"`
-	ShortDescription sarifMessage     `json:"shortDescription"`
-	DefaultConfig    sarifRuleConfig  `json:"defaultConfiguration"`
-	Properties       sarifProperties  `json:"properties,omitempty"`
+	ID               string          `json:"id"`
+	ShortDescription sarifMessage    `json:"shortDescription"`
+	DefaultConfig    sarifRuleConfig `json:"defaultConfiguration"`
+	Properties       sarifProperties `json:"properties,omitempty"`
 }
 
 type sarifRuleConfig struct {
@@ -47,10 +47,10 @@ type sarifMessage struct {
 }
 
 type sarifResult struct {
-	RuleID    string           `json:"ruleId"`
-	Level     string           `json:"level"`
-	Message   sarifMessage     `json:"message"`
-	Locations []sarifLocation  `json:"locations"`
+	RuleID    string          `json:"ruleId"`
+	Level     string          `json:"level"`
+	Message   sarifMessage    `json:"message"`
+	Locations []sarifLocation `json:"locations"`
 }
 
 type sarifLocation struct {
@@ -131,7 +131,7 @@ func ToSARIF(result *domain.AnalysisResult) ([]byte, error) {
 			{
 				Tool: sarifTool{
 					Driver: sarifDriver{
-						Name:           "quality-gate",
+						Name:           "crivo",
 						Version:        "0.1.0",
 						InformationURI: "https://github.com/guilherme11gr/crivo",
 						Rules:          rules,

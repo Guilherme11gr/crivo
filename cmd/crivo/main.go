@@ -32,17 +32,17 @@ import (
 	"github.com/guilherme11gr/crivo/internal/tui"
 )
 
-var version = "3.4.0"
+var version = "3.4.1"
 
 const helpText = `
-  quality-gate — Lightweight quality gate for code analysis
+  crivo — Local quality gate for agent coding workflows and CI
 
   Usage:
     crivo [command] [options]
 
   Commands:
-    run         Run quality gate checks (default)
-    init        Initialize quality gate in current project
+    run         Run Crivo checks (default)
+    init        Initialize Crivo in current project
     trends      Show trend history (sparklines)
     version     Show version
 
@@ -82,7 +82,7 @@ func main() {
 		fmt.Print(helpText)
 		os.Exit(0)
 	case "version":
-		fmt.Printf("quality-gate v%s\n", version)
+		fmt.Printf("crivo v%s\n", version)
 		os.Exit(0)
 	case "init":
 		runInit()
@@ -229,7 +229,7 @@ func runAnalysis(opts options) int {
 	// Print header (unless JSON mode)
 	if !opts.jsonOutput {
 		fmt.Println()
-		fmt.Println(color("  🔍 Quality Gate v"+version, cyan, bold))
+		fmt.Println(color("  🔍 Crivo v"+version, cyan, bold))
 		fmt.Println(color(fmt.Sprintf("  Config: %s", configSource), dim))
 		fmt.Println(color(fmt.Sprintf("  Policy: %s", cfg.Policy), dim))
 		if branch != "" {
@@ -415,6 +415,8 @@ func recomputeIssueDrivenCheck(check *domain.CheckResult) {
 		recomputeSecretsCheck(check)
 	case "semgrep":
 		recomputeSemgrepCheck(check)
+	case "duplication":
+		recomputeDuplicationCheck(check)
 	case "custom-rules":
 		recomputeCustomRulesCheck(check)
 	}
@@ -519,6 +521,31 @@ func recomputeSemgrepCheck(check *domain.CheckResult) {
 	check.Status = domain.StatusWarning
 }
 
+func recomputeDuplicationCheck(check *domain.CheckResult) {
+	count := len(check.Issues)
+	semanticClones := 0
+	for _, issue := range check.Issues {
+		if issue.Source == "semantic" {
+			semanticClones++
+		}
+	}
+
+	ensureMetrics(check)
+	check.Metrics["clones"] = float64(count - semanticClones)
+	check.Metrics["semantic_clones"] = float64(semanticClones)
+
+	if count == 0 {
+		check.Metrics["percentage"] = 0
+		check.Status = domain.StatusPassed
+		check.Summary = "0 duplications in new code"
+		return
+	}
+
+	check.Metrics["percentage"] = 100
+	check.Status = domain.StatusFailed
+	check.Summary = fmt.Sprintf("%d duplications in new code", count)
+}
+
 func recomputeCustomRulesCheck(check *domain.CheckResult) {
 	blockingViolations := 0
 	advisoryViolations := 0
@@ -576,6 +603,7 @@ func acquireRunLock(projectDir string) (func(), error) {
 			return func() {
 				_ = lockFile.Close()
 				_ = os.Remove(lockPath)
+				_ = os.Remove(lockDir)
 			}, nil
 		}
 
@@ -732,7 +760,7 @@ func runInit() {
 	}
 
 	fmt.Println()
-	fmt.Println(color("  🚀 Initializing Quality Gate", cyan, bold))
+	fmt.Println(color("  🚀 Initializing Crivo", cyan, bold))
 	fmt.Println()
 	fmt.Println(color("  🔍 Detecting project type...", cyan))
 
@@ -756,7 +784,7 @@ func runInit() {
 
 	// Create GitHub Actions workflow
 	workflowDir := filepath.Join(projectDir, ".github", "workflows")
-	workflowPath := filepath.Join(workflowDir, "quality-gate.yml")
+	workflowPath := filepath.Join(workflowDir, "crivo.yml")
 
 	if _, err := os.Stat(workflowPath); err == nil {
 		fmt.Println(color("  ⏭️  GitHub Actions workflow already exists, skipping", yellow))
@@ -764,7 +792,7 @@ func runInit() {
 		if err := os.MkdirAll(workflowDir, 0755); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not create workflow dir: %s\n", err)
 		} else {
-			workflow := `name: Quality Gate
+			workflow := `name: Crivo
 
 on:
   pull_request:
@@ -777,8 +805,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  quality-gate:
-    name: Quality Gate
+  crivo:
+    name: Crivo
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -792,25 +820,25 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      - name: Install quality-gate
+      - name: Install Crivo
         run: go install github.com/guilherme11gr/crivo/cmd/crivo@latest
-      - name: Run Quality Gate
-        run: crivo run --md quality-gate-report.md --sarif quality-gate.sarif --save
+      - name: Run Crivo
+        run: crivo run --md crivo-report.md --sarif crivo.sarif --save
       - name: Upload SARIF
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: quality-gate.sarif
+          sarif_file: crivo.sarif
       - name: Comment PR
         if: github.event_name == 'pull_request' && always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          path: quality-gate-report.md
+          path: crivo-report.md
 `
 			if err := os.WriteFile(workflowPath, []byte(workflow), 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: could not create workflow: %s\n", err)
 			} else {
-				fmt.Println(color("  ✅ Created .github/workflows/quality-gate.yml", green))
+				fmt.Println(color("  ✅ Created .github/workflows/crivo.yml", green))
 			}
 		}
 	}
@@ -895,6 +923,10 @@ func color(text string, codes ...string) string {
 // It annotates check results with regression info and downgrades coverage/complexity
 // from "failed" to "warning" when values haven't regressed (legacy debt tolerance).
 func applyBaselineComparison(analysis *domain.AnalysisResult, projectDir string, opts options) {
+	if _, err := os.Stat(filepath.Join(projectDir, ".qualitygate", "history.db")); err != nil {
+		return
+	}
+
 	s, err := store.Open(projectDir)
 	if err != nil {
 		return

@@ -112,6 +112,38 @@ func TestFilterCheckToNewCode_RecomputesCustomRulesBlocking(t *testing.T) {
 	}
 }
 
+func TestFilterCheckToNewCode_RecomputesDuplicationMetrics(t *testing.T) {
+	check := domain.CheckResult{
+		ID:     "duplication",
+		Status: domain.StatusFailed,
+		Issues: []domain.Issue{
+			{File: "src/legacy.ts", Line: 10, Source: "jscpd"},
+			{File: "src/changed.ts", Line: 20, Source: "semantic"},
+		},
+		Metrics: map[string]float64{"percentage": 12, "clones": 1, "semantic_clones": 1},
+	}
+
+	filterCheckToNewCode(&check, map[string]bool{"src/changed.ts": true}, []gitutil.ChangedLine{{File: "src/changed.ts", StartLine: 1, EndLine: 30}})
+
+	if check.Status != domain.StatusFailed {
+		t.Fatalf("status = %s, want failed", check.Status)
+	}
+	if got := check.Metrics["percentage"]; got != 100 {
+		t.Fatalf("percentage = %v, want 100", got)
+	}
+	if got := check.Metrics["semantic_clones"]; got != 1 {
+		t.Fatalf("semantic_clones = %v, want 1", got)
+	}
+
+	filterCheckToNewCode(&check, map[string]bool{"src/other.ts": true}, nil)
+	if check.Status != domain.StatusPassed {
+		t.Fatalf("status after empty filter = %s, want passed", check.Status)
+	}
+	if got := check.Metrics["percentage"]; got != 0 {
+		t.Fatalf("percentage after empty filter = %v, want 0", got)
+	}
+}
+
 func TestAcquireRunLock_PreventsConcurrentRuns(t *testing.T) {
 	projectDir := t.TempDir()
 
@@ -135,4 +167,15 @@ func TestAcquireRunLock_PreventsConcurrentRuns(t *testing.T) {
 		t.Fatalf("expected lock acquisition after release to succeed: %v", err)
 	}
 	releaseLock2()
+}
+
+func TestApplyBaselineComparison_DoesNotCreateStoreWithoutHistory(t *testing.T) {
+	projectDir := t.TempDir()
+	analysis := &domain.AnalysisResult{}
+
+	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true})
+
+	if _, err := os.Stat(filepath.Join(projectDir, ".qualitygate")); !os.IsNotExist(err) {
+		t.Fatalf(".qualitygate existence error = %v, want not exist", err)
+	}
 }

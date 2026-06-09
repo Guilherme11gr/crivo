@@ -137,6 +137,7 @@ var policyBlockers = map[string]map[string]bool{
 		"type_errors":           true,
 		"lint_errors":           true,
 		"secrets":               true,
+		"duplication_pct":       true,
 		"custom_rules_blocking": true,
 	},
 	"strict": {

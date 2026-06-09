@@ -1,4 +1,4 @@
-name: Quality Gate
+name: Crivo
 
 on:
   pull_request:
@@ -11,8 +11,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  quality-gate:
-    name: Quality Gate
+  crivo:
+    name: Crivo
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,19 +25,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Quality Gate
-        run: npx quality-gate --ci --output quality-gate-report.md
+      - name: Run Crivo
+        run: npx crivo run --md crivo-report.md
 
-      - name: Comment PR with Quality Gate Report
+      - name: Comment PR with Crivo Report
         if: github.event_name == 'pull_request' && always()
         uses: marocchino/sticky-pull-request-comment@v2
         with:
-          path: quality-gate-report.md
+          path: crivo-report.md
 
       - name: Upload Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: quality-gate-report
-          path: quality-gate-report.md
+          name: crivo-report
+          path: crivo-report.md
           retention-days: 30

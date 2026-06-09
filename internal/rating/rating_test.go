@@ -125,3 +125,30 @@ func TestEvaluateQualityGate_ReleaseBlocksCustomRules(t *testing.T) {
 		t.Fatal("expected custom rules condition to fail")
 	}
 }
+
+func TestEvaluateQualityGate_ReleaseBlocksDuplication(t *testing.T) {
+	result := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:      "duplication",
+				Status:  domain.StatusFailed,
+				Metrics: map[string]float64{"percentage": 8.5},
+			},
+		},
+	}
+
+	EvaluateQualityGate(result, "release")
+
+	if result.Status != domain.GateFailed {
+		t.Fatalf("status = %s, want failed", result.Status)
+	}
+	if len(result.Conditions) != 1 {
+		t.Fatalf("conditions = %d, want 1", len(result.Conditions))
+	}
+	if result.Conditions[0].Metric != "duplication_pct" {
+		t.Fatalf("metric = %q", result.Conditions[0].Metric)
+	}
+	if result.Conditions[0].Passed {
+		t.Fatal("expected duplication condition to fail")
+	}
+}

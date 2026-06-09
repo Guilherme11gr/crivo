@@ -28,9 +28,9 @@ type Model struct {
 	analysis    *domain.AnalysisResult
 	trendPoints []store.TrendPoint
 
-	activeTab   Tab
-	width       int
-	height      int
+	activeTab Tab
+	width     int
+	height    int
 
 	// Issues tab
 	issueList     []domain.Issue
@@ -56,7 +56,7 @@ func New(analysis *domain.AnalysisResult, trends []store.TrendPoint) Model {
 
 // Init implements tea.Model
 func (m Model) Init() tea.Cmd {
-	return tea.SetWindowTitle("Quality Gate")
+	return tea.SetWindowTitle("Crivo")
 }
 
 // Update implements tea.Model
@@ -157,11 +157,11 @@ func (m Model) renderTabBar() string {
 func (m Model) renderDashboard() string {
 	var sections []string
 
-	// Quality Gate banner
+	// Crivo gate banner
 	if m.analysis.Status == domain.GatePassed {
-		sections = append(sections, gatePassed.Render("  QUALITY GATE: PASSED  "))
+		sections = append(sections, gatePassed.Render("  CRIVO: PASSED  "))
 	} else {
-		sections = append(sections, gateFailed.Render("  QUALITY GATE: FAILED  "))
+		sections = append(sections, gateFailed.Render("  CRIVO: FAILED  "))
 	}
 	sections = append(sections, "")
 
