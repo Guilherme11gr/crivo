@@ -25,3 +25,5 @@ npm/bin/crivo.cmd
 
 # Claude settings (may contain tokens)
 .claude/settings.json
+
+.env
