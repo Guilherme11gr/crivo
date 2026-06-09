@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -175,6 +178,13 @@ func runAnalysis(opts options) int {
 		return 1
 	}
 
+	releaseRunLock, err := acquireRunLock(projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		return 1
+	}
+	defer releaseRunLock()
+
 	// Load config
 	cfg, configSource := config.Load(projectDir)
 
@@ -231,6 +241,32 @@ func runAnalysis(opts options) int {
 		fmt.Println()
 	}
 
+	var changedFiles []gitutil.ChangedFile
+	var changedLines []gitutil.ChangedLine
+	changedFileSet := map[string]bool{}
+	if opts.newCode && gitutil.IsGitRepo(projectDir) {
+		baseBranch := gitutil.DefaultBranch(ctx, projectDir)
+		if opts.branch != "" {
+			baseBranch = opts.branch
+		}
+
+		currentBranch, _ := gitutil.CurrentBranch(ctx, projectDir)
+
+		diffRef := baseBranch
+		headRef := "HEAD"
+		if currentBranch == baseBranch {
+			diffRef = "HEAD"
+			headRef = ""
+		}
+
+		changedFiles, _ = gitutil.GetChangedFiles(ctx, projectDir, diffRef, headRef)
+		changedLines, _ = gitutil.GetChangedLines(ctx, projectDir, diffRef, headRef)
+		for _, f := range changedFiles {
+			changedFileSet[f.Path] = true
+		}
+		ctx = check.WithNewCodeScope(ctx, check.NewScope(changedFiles, changedLines))
+	}
+
 	// Run checks with progress
 	runner := check.NewRunner(registry, 0)
 
@@ -268,43 +304,9 @@ func runAnalysis(opts options) int {
 
 	// If --new-code, filter issues to only changed files/lines
 	if opts.newCode && gitutil.IsGitRepo(projectDir) {
-		baseBranch := gitutil.DefaultBranch(ctx, projectDir)
-		if opts.branch != "" {
-			baseBranch = opts.branch
-		}
-
-		currentBranch, _ := gitutil.CurrentBranch(ctx, projectDir)
-
-		// If we're on the default branch, use uncommitted changes (working tree diff)
-		diffRef := baseBranch
-		headRef := "HEAD"
-		if currentBranch == baseBranch {
-			// Compare HEAD vs working tree (staged + unstaged)
-			diffRef = "HEAD"
-			headRef = ""
-		}
-
-		changedFiles, _ := gitutil.GetChangedFiles(ctx, projectDir, diffRef, headRef)
-		changedLines, _ := gitutil.GetChangedLines(ctx, projectDir, diffRef, headRef)
-
-		// Build set of changed file paths for fast lookup
-		changedFileSet := map[string]bool{}
-		for _, f := range changedFiles {
-			changedFileSet[f.Path] = true
-		}
-
 		if len(changedFileSet) > 0 {
 			for i := range analysis.Checks {
-				var filtered []domain.Issue
-				for _, issue := range analysis.Checks[i].Issues {
-					// Include if file is changed AND (no line-level data OR line is in changed range)
-					if changedFileSet[issue.File] {
-						if len(changedLines) == 0 || gitutil.IsNewCodeLine(changedLines, issue.File, issue.Line) {
-							filtered = append(filtered, issue)
-						}
-					}
-				}
-				analysis.Checks[i].Issues = filtered
+				filterCheckToNewCode(&analysis.Checks[i], changedFileSet, changedLines)
 			}
 
 			if !opts.jsonOutput && !opts.tuiMode {
@@ -383,6 +385,292 @@ func runAnalysis(opts options) int {
 		return 0
 	}
 	return 1
+}
+
+func filterCheckToNewCode(check *domain.CheckResult, changedFileSet map[string]bool, changedLines []gitutil.ChangedLine) {
+	if len(check.Issues) == 0 {
+		return
+	}
+
+	filtered := make([]domain.Issue, 0, len(check.Issues))
+	for _, issue := range check.Issues {
+		if !changedFileSet[issue.File] {
+			continue
+		}
+		if len(changedLines) > 0 && !gitutil.IsNewCodeLine(changedLines, issue.File, issue.Line) {
+			continue
+		}
+		filtered = append(filtered, issue)
+	}
+
+	check.Issues = filtered
+	recomputeIssueDrivenCheck(check)
+}
+
+func recomputeIssueDrivenCheck(check *domain.CheckResult) {
+	switch check.ID {
+	case "typescript":
+		recomputeTypescriptCheck(check)
+	case "secrets":
+		recomputeSecretsCheck(check)
+	case "semgrep":
+		recomputeSemgrepCheck(check)
+	case "custom-rules":
+		recomputeCustomRulesCheck(check)
+	}
+}
+
+func recomputeTypescriptCheck(check *domain.CheckResult) {
+	prodErrors := 0
+	testErrors := 0
+	for _, issue := range check.Issues {
+		if issue.Severity == domain.SeverityMinor {
+			testErrors++
+			continue
+		}
+		prodErrors++
+	}
+	totalErrors := prodErrors + testErrors
+	ensureMetrics(check)
+	check.Metrics["errors"] = float64(totalErrors)
+	check.Metrics["prod_errors"] = float64(prodErrors)
+	check.Metrics["test_errors"] = float64(testErrors)
+
+	check.Summary = fmt.Sprintf("%d prod error", prodErrors)
+	if prodErrors != 1 {
+		check.Summary += "s"
+	}
+	if testErrors > 0 {
+		check.Summary += fmt.Sprintf(", %d in tests", testErrors)
+	}
+	if totalErrors == 0 {
+		check.Status = domain.StatusPassed
+		check.Summary = "0 errors"
+		return
+	}
+	if prodErrors == 0 {
+		check.Status = domain.StatusWarning
+		return
+	}
+	check.Status = domain.StatusFailed
+}
+
+func recomputeSecretsCheck(check *domain.CheckResult) {
+	count := len(check.Issues)
+	realSecrets := 0
+	for _, issue := range check.Issues {
+		if issue.Severity != domain.SeverityInfo {
+			realSecrets++
+		}
+	}
+	ensureMetrics(check)
+	check.Metrics["secrets"] = float64(realSecrets)
+	if count == 0 {
+		check.Status = domain.StatusPassed
+		check.Summary = "0 secrets detected"
+		return
+	}
+	check.Status = domain.StatusFailed
+	check.Summary = fmt.Sprintf("%d secret", count)
+	if count != 1 {
+		check.Summary += "s"
+	}
+	check.Summary += " detected"
+}
+
+func recomputeSemgrepCheck(check *domain.CheckResult) {
+	vulns := 0
+	hotspots := 0
+	for _, issue := range check.Issues {
+		if issue.Type == domain.IssueTypeVulnerability {
+			vulns++
+		} else if issue.Type == domain.IssueTypeSecurityHotspot {
+			hotspots++
+		}
+	}
+	ensureMetrics(check)
+	check.Metrics["vulnerabilities"] = float64(vulns)
+	check.Metrics["hotspots"] = float64(hotspots)
+	if vulns == 0 && hotspots == 0 {
+		check.Status = domain.StatusPassed
+		check.Summary = "0 findings"
+		return
+	}
+	parts := []string{}
+	if vulns > 0 {
+		label := fmt.Sprintf("%d vulnerability", vulns)
+		if vulns != 1 {
+			label = fmt.Sprintf("%d vulnerabilities", vulns)
+		}
+		parts = append(parts, label)
+	}
+	if hotspots > 0 {
+		label := fmt.Sprintf("%d hotspot", hotspots)
+		if hotspots != 1 {
+			label += "s"
+		}
+		parts = append(parts, label)
+	}
+	check.Summary = strings.Join(parts, " · ")
+	if vulns > 0 {
+		check.Status = domain.StatusFailed
+		return
+	}
+	check.Status = domain.StatusWarning
+}
+
+func recomputeCustomRulesCheck(check *domain.CheckResult) {
+	blockingViolations := 0
+	advisoryViolations := 0
+	hasBlocker := false
+	for _, issue := range check.Issues {
+		if issue.Advisory {
+			advisoryViolations++
+			continue
+		}
+		blockingViolations++
+		if issue.Severity == domain.SeverityBlocker || issue.Severity == domain.SeverityCritical {
+			hasBlocker = true
+		}
+	}
+	ensureMetrics(check)
+	check.Metrics["violations"] = float64(len(check.Issues))
+	check.Metrics["blocking_violations"] = float64(blockingViolations)
+	check.Metrics["advisory_violations"] = float64(advisoryViolations)
+
+	if blockingViolations == 0 {
+		check.Status = domain.StatusPassed
+		if advisoryViolations == 0 {
+			check.Summary = "0 violations in new code"
+			return
+		}
+		check.Summary = fmt.Sprintf("%d advisory-only violations in new code", advisoryViolations)
+		return
+	}
+	check.Summary = fmt.Sprintf("%d blocking violations in new code", blockingViolations)
+	if hasBlocker {
+		check.Status = domain.StatusFailed
+		return
+	}
+	check.Status = domain.StatusWarning
+}
+
+func ensureMetrics(check *domain.CheckResult) {
+	if check.Metrics == nil {
+		check.Metrics = map[string]float64{}
+	}
+}
+
+func acquireRunLock(projectDir string) (func(), error) {
+	lockDir := filepath.Join(projectDir, ".qualitygate")
+	if err := os.MkdirAll(lockDir, 0755); err != nil {
+		return nil, fmt.Errorf("create lock dir: %w", err)
+	}
+
+	lockPath := filepath.Join(lockDir, "run.lock")
+	for attempt := 0; attempt < 2; attempt++ {
+		lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+		if err == nil {
+			_, _ = fmt.Fprintf(lockFile, "pid=%d\nstarted_at=%s\n", os.Getpid(), time.Now().Format(time.RFC3339))
+
+			return func() {
+				_ = lockFile.Close()
+				_ = os.Remove(lockPath)
+			}, nil
+		}
+
+		if !errors.Is(err, os.ErrExist) {
+			return nil, fmt.Errorf("create run lock: %w", err)
+		}
+
+		stale, staleErr := isRunLockStale(lockPath)
+		if staleErr != nil {
+			return nil, fmt.Errorf("inspect existing run lock: %w", staleErr)
+		}
+		if !stale {
+			return nil, fmt.Errorf("another crivo run is already in progress for this project (%s). Wait for it to finish or remove %s if the lock is stale", projectDir, lockPath)
+		}
+
+		if removeErr := os.Remove(lockPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return nil, fmt.Errorf("remove stale run lock: %w", removeErr)
+		}
+	}
+
+	return nil, fmt.Errorf("unable to acquire run lock for %s", projectDir)
+}
+
+func isRunLockStale(lockPath string) (bool, error) {
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return true, nil
+		}
+		return false, err
+	}
+
+	pid, startedAt := parseRunLockMetadata(string(data))
+	if !startedAt.IsZero() && time.Since(startedAt) > 6*time.Hour {
+		return true, nil
+	}
+	if pid <= 0 {
+		return false, nil
+	}
+
+	running, err := processRunning(pid)
+	if err != nil {
+		return false, err
+	}
+	return !running, nil
+}
+
+func parseRunLockMetadata(contents string) (int, time.Time) {
+	var pid int
+	var startedAt time.Time
+
+	for _, line := range strings.Split(contents, "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		switch key {
+		case "pid":
+			parsedPID, err := strconv.Atoi(value)
+			if err == nil {
+				pid = parsedPID
+			}
+		case "started_at":
+			parsedTime, err := time.Parse(time.RFC3339, value)
+			if err == nil {
+				startedAt = parsedTime
+			}
+		}
+	}
+
+	return pid, startedAt
+}
+
+func processRunning(pid int) (bool, error) {
+	if pid <= 0 {
+		return false, nil
+	}
+
+	if os.PathSeparator == '\\' {
+		out, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid)).CombinedOutput()
+		if err != nil {
+			return false, err
+		}
+		return strings.Contains(string(out), strconv.Itoa(pid)), nil
+	}
+
+	err := exec.Command("kill", "-0", strconv.Itoa(pid)).Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		return false, nil
+	}
+	return false, err
 }
 
 func runTrends() {

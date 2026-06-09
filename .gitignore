@@ -8,6 +8,8 @@ dist/
 # Go
 /crivo.exe
 /crivo
+/qg.exe
+*.tgz
 /bin/
 
 # npm package — keep launcher script, ignore downloaded binaries

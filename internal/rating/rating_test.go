@@ -98,3 +98,30 @@ func TestParseEffort(t *testing.T) {
 		})
 	}
 }
+
+func TestEvaluateQualityGate_ReleaseBlocksCustomRules(t *testing.T) {
+	result := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:      "custom-rules",
+				Status:  domain.StatusFailed,
+				Metrics: map[string]float64{"blocking_violations": 2},
+			},
+		},
+	}
+
+	EvaluateQualityGate(result, "release")
+
+	if result.Status != domain.GateFailed {
+		t.Fatalf("status = %s, want failed", result.Status)
+	}
+	if len(result.Conditions) != 1 {
+		t.Fatalf("conditions = %d, want 1", len(result.Conditions))
+	}
+	if result.Conditions[0].Metric != "custom_rules_blocking" {
+		t.Fatalf("metric = %q", result.Conditions[0].Metric)
+	}
+	if result.Conditions[0].Passed {
+		t.Fatal("expected custom rules condition to fail")
+	}
+}

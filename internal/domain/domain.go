@@ -17,21 +17,22 @@ const (
 type IssueType string
 
 const (
-	IssueTypeBug           IssueType = "bug"
-	IssueTypeVulnerability IssueType = "vulnerability"
-	IssueTypeCodeSmell     IssueType = "code_smell"
+	IssueTypeBug             IssueType = "bug"
+	IssueTypeVulnerability   IssueType = "vulnerability"
+	IssueTypeCodeSmell       IssueType = "code_smell"
 	IssueTypeSecurityHotspot IssueType = "security_hotspot"
 )
 
 // Issue represents a single finding from a check
 type Issue struct {
-	RuleID   string    `json:"ruleId"`
-	Message  string    `json:"message"`
-	File     string    `json:"file"`
-	Line     int       `json:"line"`
-	Column   int       `json:"column"`
-	Severity Severity  `json:"severity"`
-	Type     IssueType `json:"type"`
+	RuleID      string    `json:"ruleId"`
+	Message     string    `json:"message"`
+	File        string    `json:"file"`
+	Line        int       `json:"line"`
+	Column      int       `json:"column"`
+	Severity    Severity  `json:"severity"`
+	Type        IssueType `json:"type"`
+	Advisory    bool      `json:"advisory,omitempty"`
 	Source      string    `json:"source"`                // which provider found it
 	Effort      string    `json:"effort"`                // estimated fix time e.g. "5min"
 	Remediation string    `json:"remediation,omitempty"` // actionable fix hint for AI agents
@@ -50,14 +51,14 @@ const (
 
 // CheckResult is what each provider returns
 type CheckResult struct {
-	Name     string            `json:"name"`
-	ID       string            `json:"id"`
-	Status   CheckStatus       `json:"status"`
-	Summary  string            `json:"summary"`
-	Issues   []Issue           `json:"issues,omitempty"`
+	Name     string             `json:"name"`
+	ID       string             `json:"id"`
+	Status   CheckStatus        `json:"status"`
+	Summary  string             `json:"summary"`
+	Issues   []Issue            `json:"issues,omitempty"`
 	Metrics  map[string]float64 `json:"metrics,omitempty"`
-	Duration time.Duration     `json:"duration"`
-	Details  []string          `json:"details,omitempty"`
+	Duration time.Duration      `json:"duration"`
+	Details  []string           `json:"details,omitempty"`
 }
 
 // Rating represents A-E quality ratings (SonarQube style)
@@ -90,15 +91,15 @@ type QualityGateCondition struct {
 
 // AnalysisResult is the top-level result of a full analysis run
 type AnalysisResult struct {
-	Version       string                `json:"version"`
-	ProjectDir    string                `json:"projectDir"`
-	Status        QualityGateStatus     `json:"status"`
-	Checks        []CheckResult         `json:"checks"`
+	Version       string                 `json:"version"`
+	ProjectDir    string                 `json:"projectDir"`
+	Status        QualityGateStatus      `json:"status"`
+	Checks        []CheckResult          `json:"checks"`
 	Conditions    []QualityGateCondition `json:"conditions"`
-	Ratings       map[string]Rating     `json:"ratings"`
-	TotalIssues   int                   `json:"totalIssues"`
-	TotalDuration time.Duration         `json:"totalDuration"`
-	Timestamp     time.Time             `json:"timestamp"`
+	Ratings       map[string]Rating      `json:"ratings"`
+	TotalIssues   int                    `json:"totalIssues"`
+	TotalDuration time.Duration          `json:"totalDuration"`
+	Timestamp     time.Time              `json:"timestamp"`
 }
 
 // AllIssues collects issues from all checks

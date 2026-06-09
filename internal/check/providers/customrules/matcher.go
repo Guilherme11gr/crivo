@@ -84,6 +84,7 @@ func matchBanImport(rule CompiledRule, filePath string, lines []string) []domain
 						Column:      loc[0] + 1,
 						Severity:    rule.Severity,
 						Type:        domain.IssueTypeCodeSmell,
+						Advisory:    rule.Advisory,
 						Source:      "custom-rules",
 						Effort:      "10min",
 						Remediation: domain.CustomRuleRemediation("ban-import", rule.Raw.Message),
@@ -119,6 +120,7 @@ func matchBanPattern(rule CompiledRule, filePath string, lines []string) []domai
 				Column:      loc[0] + 1,
 				Severity:    rule.Severity,
 				Type:        domain.IssueTypeCodeSmell,
+				Advisory:    rule.Advisory,
 				Source:      "custom-rules",
 				Effort:      "10min",
 				Remediation: domain.CustomRuleRemediation("ban-pattern", rule.Raw.Message),
@@ -155,6 +157,7 @@ func matchRequireImport(rule CompiledRule, filePath string, content string) []do
 			Line:        1,
 			Severity:    rule.Severity,
 			Type:        domain.IssueTypeCodeSmell,
+			Advisory:    rule.Advisory,
 			Source:      "custom-rules",
 			Effort:      "10min",
 			Remediation: domain.CustomRuleRemediation("require-import", rule.Raw.Message),
@@ -176,6 +179,7 @@ func matchEnforcePattern(rule CompiledRule, filePath string, content string) []d
 			Line:        1,
 			Severity:    rule.Severity,
 			Type:        domain.IssueTypeCodeSmell,
+			Advisory:    rule.Advisory,
 			Source:      "custom-rules",
 			Effort:      "15min",
 			Remediation: domain.CustomRuleRemediation("enforce-pattern", rule.Raw.Message),
@@ -201,6 +205,7 @@ func matchMaxLines(rule CompiledRule, filePath string, lines []string) []domain.
 			Line:        1,
 			Severity:    rule.Severity,
 			Type:        domain.IssueTypeCodeSmell,
+			Advisory:    rule.Advisory,
 			Source:      "custom-rules",
 			Effort:      "20min",
 			Remediation: domain.CustomRuleRemediation("max-lines", rule.Raw.Message),
@@ -216,7 +221,11 @@ type packageJSON struct {
 }
 
 // matchBanDependency checks for banned packages in package.json.
-func matchBanDependency(rule CompiledRule, projectDir string) []domain.Issue {
+func matchBanDependency(rule CompiledRule, projectDir string, scopedFiles map[string]bool) []domain.Issue {
+	if scopedFiles != nil && !scopedFiles["package.json"] {
+		return nil
+	}
+
 	pkgPath := filepath.Join(projectDir, "package.json")
 	data, err := os.ReadFile(pkgPath)
 	if err != nil {
@@ -255,6 +264,7 @@ func matchBanDependency(rule CompiledRule, projectDir string) []domain.Issue {
 				Line:        line,
 				Severity:    rule.Severity,
 				Type:        domain.IssueTypeCodeSmell,
+				Advisory:    rule.Advisory,
 				Source:      "custom-rules",
 				Effort:      "15min",
 				Remediation: domain.CustomRuleRemediation("ban-dependency", rule.Raw.Message),
@@ -452,6 +462,7 @@ func matchSemgrep(ctx context.Context, rule CompiledRule, projectDir string, fil
 			Column:      r.Start.Col,
 			Severity:    rule.Severity,
 			Type:        domain.IssueTypeCodeSmell,
+			Advisory:    rule.Advisory,
 			Source:      "custom-rules",
 			Effort:      "15min",
 			Remediation: domain.CustomRuleRemediation("semgrep", rule.Raw.Message),
@@ -540,7 +551,7 @@ func buildSemgrepBatchConfig(rules []CompiledRule) (string, error) {
 // matchSemgrepBatch runs semgrep once with multiple rules batched into a single config file.
 // Rules are grouped by their file glob, and one semgrep invocation is made per glob group.
 // Results are mapped back to the correct rule by check_id.
-func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir string, exclude []string) []domain.Issue {
+func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir string, exclude []string, scopedFiles []string) []domain.Issue {
 	if !isSemgrepAvailable() || len(rules) == 0 {
 		return nil
 	}
@@ -564,7 +575,7 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 	var allIssues []domain.Issue
 
 	for glob, groupRules := range globToRules {
-		files, err := WalkFiles(ctx, projectDir, glob, exclude)
+		files, err := filesForGlob(ctx, projectDir, glob, exclude, scopedFiles)
 		if err != nil {
 			if ctx.Err() != nil {
 				return allIssues
@@ -638,6 +649,7 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 				Column:      r.Start.Col,
 				Severity:    rule.Severity,
 				Type:        domain.IssueTypeCodeSmell,
+				Advisory:    rule.Advisory,
 				Source:      "custom-rules",
 				Effort:      "15min",
 				Remediation: domain.CustomRuleRemediation("advisory", rule.Raw.Message),

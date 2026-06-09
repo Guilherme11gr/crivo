@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
@@ -45,6 +46,16 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		return result, nil
 	}
 
+	var scopedFiles []string
+	var scopedFileSet map[string]bool
+	if scope, ok := check.NewCodeScopeFromContext(ctx); ok {
+		scopedFiles = filterExistingFiles(projectDir, scope.ChangedFiles)
+		scopedFileSet = make(map[string]bool, len(scopedFiles))
+		for _, file := range scopedFiles {
+			scopedFileSet[file] = true
+		}
+	}
+
 	// Compile rules
 	compiled, compileErrs := CompileRules(cfg.CustomRules)
 	if len(compileErrs) > 0 {
@@ -67,7 +78,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	for _, rule := range compiled {
 		switch rule.Type {
 		case RuleTypeBanDependency:
-			issues := matchBanDependency(rule, projectDir)
+			issues := matchBanDependency(rule, projectDir, scopedFileSet)
 			allIssues = append(allIssues, issues...)
 		case RuleTypeSemgrep:
 			semgrepRules = append(semgrepRules, rule)
@@ -78,7 +89,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 
 	// Run semgrep rules — batch all rules into minimal semgrep invocations (grouped by file glob)
 	if len(semgrepRules) > 0 {
-		issues := matchSemgrepBatch(ctx, semgrepRules, projectDir, cfg.Exclude)
+		issues := matchSemgrepBatch(ctx, semgrepRules, projectDir, cfg.Exclude, scopedFiles)
 		allIssues = append(allIssues, issues...)
 	}
 
@@ -94,7 +105,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}
 
 		for glob, rules := range globToRules {
-			files, err := WalkFiles(ctx, projectDir, glob, cfg.Exclude)
+			files, err := filesForGlob(ctx, projectDir, glob, cfg.Exclude, scopedFiles)
 			if err != nil {
 				if ctx.Err() != nil {
 					result.Status = domain.StatusError
@@ -149,9 +160,20 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 
 	result.Issues = allIssues
 	result.Duration = time.Since(start)
+	advisoryViolations := 0
+	blockingViolations := 0
+	for _, issue := range allIssues {
+		if issue.Advisory {
+			advisoryViolations++
+			continue
+		}
+		blockingViolations++
+	}
 	result.Metrics = map[string]float64{
-		"rules":      float64(len(compiled)),
-		"violations":  float64(len(allIssues)),
+		"rules":               float64(len(compiled)),
+		"violations":          float64(len(allIssues)),
+		"blocking_violations": float64(blockingViolations),
+		"advisory_violations": float64(advisoryViolations),
 	}
 
 	// Build set of advisory rule IDs for status calculation
@@ -205,4 +227,36 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 
 	return result, nil
+}
+
+func filterExistingFiles(projectDir string, files []string) []string {
+	result := make([]string, 0, len(files))
+	for _, file := range files {
+		absPath := filepath.Join(projectDir, file)
+		if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+			result = append(result, file)
+		}
+	}
+	return result
+}
+
+func filesForGlob(ctx context.Context, projectDir, glob string, exclude []string, scopedFiles []string) ([]string, error) {
+	if len(scopedFiles) == 0 {
+		return WalkFiles(ctx, projectDir, glob, exclude)
+	}
+
+	files := make([]string, 0, len(scopedFiles))
+	for _, file := range scopedFiles {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		if matchGlob(glob, file) {
+			files = append(files, file)
+		}
+	}
+
+	return files, nil
 }

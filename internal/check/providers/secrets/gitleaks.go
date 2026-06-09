@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,16 +20,16 @@ import (
 )
 
 type gitleaksResult struct {
-	Description string `json:"Description"`
-	StartLine   int    `json:"StartLine"`
-	EndLine     int    `json:"EndLine"`
-	StartColumn int    `json:"StartColumn"`
-	EndColumn   int    `json:"EndColumn"`
-	File        string `json:"File"`
+	Description string  `json:"Description"`
+	StartLine   int     `json:"StartLine"`
+	EndLine     int     `json:"EndLine"`
+	StartColumn int     `json:"StartColumn"`
+	EndColumn   int     `json:"EndColumn"`
+	File        string  `json:"File"`
 	Entropy     float64 `json:"Entropy"`
-	RuleID      string `json:"RuleID"`
-	Fingerprint string `json:"Fingerprint"`
-	Match       string `json:"Match"`
+	RuleID      string  `json:"RuleID"`
+	Fingerprint string  `json:"Fingerprint"`
+	Match       string  `json:"Match"`
 }
 
 type Provider struct{}
@@ -46,29 +47,6 @@ func (p *Provider) Detect(_ context.Context, _ string) bool {
 func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Config) (*domain.CheckResult, error) {
 	start := time.Now()
 
-	// On Windows, /dev/stdout doesn't exist — use a temp file instead
-	var reportPath string
-	var tmpFile *os.File
-	if runtime.GOOS == "windows" {
-		var err error
-		tmpFile, err = os.CreateTemp("", "gitleaks-*.json")
-		if err != nil {
-			return &domain.CheckResult{
-				Name:     p.Name(),
-				ID:       p.ID(),
-				Status:   domain.StatusError,
-				Summary:  "Failed to create temp file for gitleaks",
-				Details:  []string{err.Error()},
-				Duration: time.Since(start),
-			}, nil
-		}
-		tmpFile.Close()
-		reportPath = tmpFile.Name()
-		defer os.Remove(reportPath)
-	} else {
-		reportPath = "/dev/stdout"
-	}
-
 	gitleaksBin, err := check.EnsureTool("gitleaks")
 	if err != nil {
 		return &domain.CheckResult{
@@ -81,61 +59,27 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		}, nil
 	}
 
-	cmd := exec.CommandContext(ctx, gitleaksBin, "detect",
-		"--source="+projectDir,
-		"--report-format=json",
-		"--report-path="+reportPath,
-		"--no-git",
-		"--no-banner",
-	)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	runErr := cmd.Run()
-	duration := time.Since(start)
-
-	var output []byte
-	if runtime.GOOS == "windows" {
-		output, _ = os.ReadFile(reportPath)
-	} else {
-		output = stdout.Bytes()
-	}
-
-	// Exit 0 = no leaks, exit 1 = leaks found
-	if runErr == nil && len(output) == 0 {
+	targets := gitleaksTargets(ctx, projectDir)
+	if len(targets) == 0 {
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),
 			Status:   domain.StatusPassed,
 			Summary:  "0 secrets detected",
-			Duration: duration,
+			Duration: time.Since(start),
 		}, nil
 	}
 
-	var results []gitleaksResult
-	if len(output) > 0 {
-		if err := json.Unmarshal(output, &results); err != nil {
-			// Try if it's empty array
-			if string(output) == "[]" || string(output) == "[]\n" {
-				return &domain.CheckResult{
-					Name:     p.Name(),
-					ID:       p.ID(),
-					Status:   domain.StatusPassed,
-					Summary:  "0 secrets detected",
-					Duration: duration,
-				}, nil
-			}
-			return &domain.CheckResult{
-				Name:     p.Name(),
-				ID:       p.ID(),
-				Status:   domain.StatusError,
-				Summary:  "Failed to parse gitleaks output",
-				Details:  []string{err.Error()},
-				Duration: duration,
-			}, nil
-		}
+	results, err := runGitleaksTargets(ctx, gitleaksBin, projectDir, targets)
+	if err != nil {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusError,
+			Summary:  "Failed to run gitleaks",
+			Details:  []string{err.Error()},
+			Duration: time.Since(start),
+		}, nil
 	}
 
 	if len(results) == 0 {
@@ -144,7 +88,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 			ID:       p.ID(),
 			Status:   domain.StatusPassed,
 			Summary:  "0 secrets detected",
-			Duration: duration,
+			Duration: time.Since(start),
 		}, nil
 	}
 
@@ -207,17 +151,123 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 	}
 
 	return &domain.CheckResult{
-		Name:    p.Name(),
-		ID:      p.ID(),
-		Status:  domain.StatusFailed,
-		Summary: summary,
-		Issues:  issues,
-		Details: details,
-		Duration: duration,
+		Name:     p.Name(),
+		ID:       p.ID(),
+		Status:   domain.StatusFailed,
+		Summary:  summary,
+		Issues:   issues,
+		Details:  details,
+		Duration: time.Since(start),
 		Metrics: map[string]float64{
 			"secrets": float64(realSecretCount),
 		},
 	}, nil
+}
+
+func gitleaksTargets(ctx context.Context, projectDir string) []string {
+	if scope, ok := check.NewCodeScopeFromContext(ctx); ok {
+		targets := make([]string, 0, len(scope.ChangedFiles))
+		for _, file := range scope.ChangedFiles {
+			absPath := filepath.Join(projectDir, file)
+			if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+				targets = append(targets, absPath)
+			}
+		}
+		return targets
+	}
+
+	return []string{projectDir}
+}
+
+func runGitleaksTargets(ctx context.Context, gitleaksBin, projectDir string, targets []string) ([]gitleaksResult, error) {
+	var all []gitleaksResult
+	for _, target := range targets {
+		results, err := runGitleaksTarget(ctx, gitleaksBin, target)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, normalizeGitleaksResults(projectDir, results)...)
+	}
+	return all, nil
+}
+
+func runGitleaksTarget(ctx context.Context, gitleaksBin, target string) ([]gitleaksResult, error) {
+	reportPath, cleanup, err := gitleaksReportTarget()
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	cmd := exec.CommandContext(ctx, gitleaksBin, "detect",
+		"--source="+target,
+		"--report-format=json",
+		"--report-path="+reportPath,
+		"--no-git",
+		"--no-banner",
+	)
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+
+	var output []byte
+	if runtime.GOOS == "windows" {
+		output, _ = os.ReadFile(reportPath)
+	} else {
+		output = stdout.Bytes()
+	}
+
+	if runErr == nil && len(output) == 0 {
+		return nil, nil
+	}
+
+	var results []gitleaksResult
+	if len(output) == 0 {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg == "" && runErr != nil {
+			errMsg = runErr.Error()
+		}
+		if errMsg == "" {
+			return nil, nil
+		}
+		return nil, errors.New(errMsg)
+	}
+
+	if err := json.Unmarshal(output, &results); err != nil {
+		if string(output) == "[]" || string(output) == "[]\n" {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	return results, nil
+}
+
+func gitleaksReportTarget() (string, func(), error) {
+	if runtime.GOOS != "windows" {
+		return "/dev/stdout", func() {}, nil
+	}
+
+	tmpFile, err := os.CreateTemp("", "gitleaks-*.json")
+	if err != nil {
+		return "", nil, err
+	}
+	tmpFile.Close()
+	path := tmpFile.Name()
+	return path, func() { _ = os.Remove(path) }, nil
+}
+
+func normalizeGitleaksResults(projectDir string, results []gitleaksResult) []gitleaksResult {
+	for i := range results {
+		if rel, err := filepath.Rel(projectDir, results[i].File); err == nil {
+			results[i].File = filepath.ToSlash(rel)
+		} else {
+			results[i].File = filepath.ToSlash(results[i].File)
+		}
+	}
+	return results
 }
 
 func maskSecret(s string) string {

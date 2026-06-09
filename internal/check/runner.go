@@ -3,6 +3,7 @@ package check
 import (
 	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -23,16 +24,45 @@ type ProgressEvent struct {
 type Runner struct {
 	registry   *Registry
 	maxWorkers int
+	maxHeavy   int
 }
 
 // NewRunner creates a runner with a concurrency limit
 func NewRunner(registry *Registry, maxWorkers int) *Runner {
+	maxHeavy := 1
 	if maxWorkers <= 0 {
-		maxWorkers = runtime.NumCPU()
+		maxWorkers = defaultMaxWorkers()
+		maxHeavy = defaultHeavyWorkers()
+	} else if maxWorkers > 1 {
+		maxHeavy = min(maxWorkers, 2)
 	}
 	return &Runner{
 		registry:   registry,
 		maxWorkers: maxWorkers,
+		maxHeavy:   maxHeavy,
+	}
+}
+
+func defaultMaxWorkers() int {
+	if os.Getenv("CI") == "true" {
+		return min(max(runtime.NumCPU()/2, 2), 4)
+	}
+	return min(max(runtime.NumCPU()/4, 1), 2)
+}
+
+func defaultHeavyWorkers() int {
+	if os.Getenv("CI") == "true" {
+		return 2
+	}
+	return 1
+}
+
+func isHeavyProviderID(id string) bool {
+	switch id {
+	case "coverage", "duplication", "semgrep", "secrets", "dead-code":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -86,6 +116,7 @@ func (r *Runner) Run(ctx context.Context, projectDir string, cfg *config.Config,
 
 	// Run checks in parallel with semaphore
 	sem := make(chan struct{}, r.maxWorkers)
+	heavySem := make(chan struct{}, max(r.maxHeavy, 1))
 	var mu sync.Mutex
 	results := make([]domain.CheckResult, 0, len(active))
 	var wg sync.WaitGroup
@@ -98,6 +129,10 @@ func (r *Runner) Run(ctx context.Context, projectDir string, cfg *config.Config,
 
 			sem <- struct{}{}        // acquire
 			defer func() { <-sem }() // release
+			if isHeavyProviderID(provider.ID()) {
+				heavySem <- struct{}{}
+				defer func() { <-heavySem }()
+			}
 
 			if progressCh != nil {
 				progressCh <- ProgressEvent{

@@ -42,7 +42,7 @@ changelog:
 nfpms:
   - id: default
     package_name: crivo
-    description: "Lightweight quality gate for code analysis"
+    description: "Local quality gate for AI-agent coding workflows and CI"
     maintainer: "Guilherme Revoredo"
     license: MIT
     formats:

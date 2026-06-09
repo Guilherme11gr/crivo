@@ -3,10 +3,16 @@ package semgrep
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/check"
+	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
+	gitutil "github.com/guilherme11gr/crivo/internal/git"
 )
 
 func TestNameAndID(t *testing.T) {
@@ -271,4 +277,51 @@ func TestDetect_SemgrepNotInPath(t *testing.T) {
 	// We can't assert true or false here since semgrep may or may not be installed,
 	// but we verify it doesn't panic and returns a bool.
 	_ = result
+}
+
+func TestSemgrepJobs_LocalDefault(t *testing.T) {
+	t.Setenv("CI", "")
+	t.Setenv("CRIVO_SEMGREP_JOBS", "")
+	got := semgrepJobs()
+	if got < 1 || got > 2 {
+		t.Fatalf("semgrepJobs() = %d, want 1..2 for local runs", got)
+	}
+}
+
+func TestSemgrepJobs_CIIsBounded(t *testing.T) {
+	t.Setenv("CI", "true")
+	t.Setenv("CRIVO_SEMGREP_JOBS", "")
+	got := semgrepJobs()
+	if got < 2 || got > 4 {
+		t.Fatalf("semgrepJobs() = %d, want 2..4 for CI runs", got)
+	}
+}
+
+func TestSemgrepJobs_EnvOverride(t *testing.T) {
+	t.Setenv("CRIVO_SEMGREP_JOBS", "3")
+	if got := semgrepJobs(); got != 3 {
+		t.Fatalf("semgrepJobs() = %d, want 3 from env", got)
+	}
+}
+
+func TestSemgrepTargets_UsesChangedFilesScope(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "src"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "src", "rule.ts"), []byte("const x = 1"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	ctx := check.WithNewCodeScope(context.Background(), check.NewScope(
+		[]gitutil.ChangedFile{{Path: "src/rule.ts"}, {Path: "README.md"}},
+		nil,
+	))
+
+	targets := semgrepTargets(ctx, projectDir, config.DefaultConfig())
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %d: %#v", len(targets), targets)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(targets[0]), "src/rule.ts") {
+		t.Fatalf("unexpected target %q", targets[0])
+	}
 }

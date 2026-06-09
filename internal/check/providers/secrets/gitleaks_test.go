@@ -1,11 +1,16 @@
 package secrets
 
 import (
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/domain"
+	gitutil "github.com/guilherme11gr/crivo/internal/git"
 )
 
 func TestParseGitleaksOutput_NoSecrets(t *testing.T) {
@@ -250,5 +255,28 @@ func TestIssueFieldsFromGitleaksResult(t *testing.T) {
 	}
 	if !strings.Contains(testIssue.Remediation, "test file") {
 		t.Errorf("test file: expected remediation to mention 'test file', got %q", testIssue.Remediation)
+	}
+}
+
+func TestGitleaksTargets_UsesChangedFilesScope(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "src"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "src", "secret.ts"), []byte("const x = 1"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ctx := check.WithNewCodeScope(context.Background(), check.NewScope(
+		[]gitutil.ChangedFile{{Path: "src/secret.ts"}, {Path: "missing.ts"}},
+		nil,
+	))
+
+	targets := gitleaksTargets(ctx, projectDir)
+	if len(targets) != 1 {
+		t.Fatalf("expected 1 target, got %d: %#v", len(targets), targets)
+	}
+	if !strings.HasSuffix(filepath.ToSlash(targets[0]), "src/secret.ts") {
+		t.Fatalf("unexpected target %q", targets[0])
 	}
 }

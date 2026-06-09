@@ -134,16 +134,18 @@ func parseEffort(effort string) int {
 // Blocking metrics per policy
 var policyBlockers = map[string]map[string]bool{
 	"release": {
-		"type_errors": true,
-		"lint_errors": true,
-		"secrets":     true,
+		"type_errors":           true,
+		"lint_errors":           true,
+		"secrets":               true,
+		"custom_rules_blocking": true,
 	},
 	"strict": {
-		"type_errors":    true,
-		"lint_errors":    true,
-		"secrets":        true,
-		"coverage_lines": true,
-		"duplication_pct": true,
+		"type_errors":           true,
+		"lint_errors":           true,
+		"secrets":               true,
+		"coverage_lines":        true,
+		"duplication_pct":       true,
+		"custom_rules_blocking": true,
 	},
 	"informational": {},
 }
@@ -244,6 +246,19 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 				Threshold: 1,
 				Actual:    secrets,
 				Passed:    secrets == 0,
+			})
+
+		case "custom-rules":
+			blockingViolations := 0.0
+			if check.Metrics != nil {
+				blockingViolations = check.Metrics["blocking_violations"]
+			}
+			conditions = append(conditions, domain.QualityGateCondition{
+				Metric:    "custom_rules_blocking",
+				Operator:  "lt",
+				Threshold: 1,
+				Actual:    blockingViolations,
+				Passed:    blockingViolations == 0,
 			})
 		}
 	}

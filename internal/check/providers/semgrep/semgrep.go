@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -35,10 +36,10 @@ type semgrepResult struct {
 		Col  int `json:"col"`
 	} `json:"end"`
 	Extra struct {
-		Message  string            `json:"message"`
-		Severity string            `json:"severity"`
-		Metadata map[string]any    `json:"metadata"`
-		Lines    string            `json:"lines"`
+		Message  string         `json:"message"`
+		Severity string         `json:"severity"`
+		Metadata map[string]any `json:"metadata"`
+		Lines    string         `json:"lines"`
 	} `json:"extra"`
 }
 
@@ -79,6 +80,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		"--json",
 		"--quiet",
 		"--config", "auto",
+		"--jobs", strconv.Itoa(semgrepJobs()),
 	}
 
 	// Add exclude patterns
@@ -86,12 +88,17 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		args = append(args, "--exclude", exc)
 	}
 
-	// Add source directories
-	if len(cfg.Src) > 0 {
-		args = append(args, cfg.Src...)
-	} else {
-		args = append(args, ".")
+	targets := semgrepTargets(ctx, projectDir, cfg)
+	if len(targets) == 0 {
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusPassed,
+			Summary:  "0 findings",
+			Duration: time.Since(start),
+		}, nil
 	}
+	args = append(args, targets...)
 
 	cmd := exec.CommandContext(ctx, semgrepBin, args...)
 	cmd.Dir = projectDir
@@ -227,18 +234,70 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 
 	return &domain.CheckResult{
-		Name:    p.Name(),
-		ID:      p.ID(),
-		Status:  status,
-		Summary: summary,
-		Issues:  issues,
-		Details: details,
+		Name:     p.Name(),
+		ID:       p.ID(),
+		Status:   status,
+		Summary:  summary,
+		Issues:   issues,
+		Details:  details,
 		Duration: duration,
 		Metrics: map[string]float64{
 			"vulnerabilities": float64(vulns),
 			"hotspots":        float64(hotspots),
 		},
 	}, nil
+}
+
+func semgrepJobs() int {
+	if raw := strings.TrimSpace(os.Getenv("CRIVO_SEMGREP_JOBS")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+
+	if os.Getenv("CI") == "true" {
+		return min(max(runtime.NumCPU()/2, 2), 4)
+	}
+
+	return min(max(runtime.NumCPU()/4, 1), 2)
+}
+
+func semgrepTargets(ctx context.Context, projectDir string, cfg *config.Config) []string {
+	if scope, ok := check.NewCodeScopeFromContext(ctx); ok {
+		var targets []string
+		for _, file := range scope.ChangedFiles {
+			if !semgrepRelevantFile(file) {
+				continue
+			}
+			absPath := filepath.Join(projectDir, file)
+			if _, err := os.Stat(absPath); err == nil {
+				targets = append(targets, absPath)
+			}
+		}
+		return targets
+	}
+
+	if len(cfg.Src) > 0 {
+		targets := make([]string, 0, len(cfg.Src))
+		for _, src := range cfg.Src {
+			targets = append(targets, src)
+		}
+		return targets
+	}
+
+	return []string{"."}
+}
+
+func semgrepRelevantFile(path string) bool {
+	lower := strings.ToLower(path)
+	return strings.HasSuffix(lower, ".ts") ||
+		strings.HasSuffix(lower, ".tsx") ||
+		strings.HasSuffix(lower, ".js") ||
+		strings.HasSuffix(lower, ".jsx") ||
+		strings.HasSuffix(lower, ".mjs") ||
+		strings.HasSuffix(lower, ".cjs") ||
+		strings.HasSuffix(lower, ".py") ||
+		strings.HasSuffix(lower, ".go")
 }
 
 func mapSeverity(s string) domain.Severity {

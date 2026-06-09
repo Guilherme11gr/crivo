@@ -419,7 +419,7 @@ func TestMatchBanDependency(t *testing.T) {
     "got": "^13.0.0"
   }
 }`)
-		issues := matchBanDependency(rule, dir)
+		issues := matchBanDependency(rule, dir, nil)
 		if len(issues) != 2 {
 			t.Errorf("expected 2 issues, got %d: %+v", len(issues), issues)
 		}
@@ -432,18 +432,37 @@ func TestMatchBanDependency(t *testing.T) {
     "react": "^18.0.0"
   }
 }`)
-		issues := matchBanDependency(rule, dir)
+		issues := matchBanDependency(rule, dir, nil)
 		if len(issues) != 0 {
 			t.Errorf("expected 0 issues, got %d", len(issues))
 		}
 	})
 
 	t.Run("no package.json", func(t *testing.T) {
-		issues := matchBanDependency(rule, t.TempDir())
+		issues := matchBanDependency(rule, t.TempDir(), nil)
 		if len(issues) != 0 {
 			t.Errorf("expected 0 issues, got %d", len(issues))
 		}
 	})
+
+	t.Run("skips when package json did not change in scoped mode", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, dir, "package.json", `{"dependencies":{"axios":"^1.5.0"}}`)
+		issues := matchBanDependency(rule, dir, map[string]bool{"src/app.ts": true})
+		if len(issues) != 0 {
+			t.Errorf("expected 0 issues, got %d", len(issues))
+		}
+	})
+}
+
+func TestFilesForGlob_ScopedFiles(t *testing.T) {
+	files, err := filesForGlob(context.Background(), t.TempDir(), "src/**/*.{ts,tsx}", nil, []string{"src/app/page.tsx", "src/lib/util.ts", "scripts/build.js"})
+	if err != nil {
+		t.Fatalf("filesForGlob() error = %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %#v", len(files), files)
+	}
 }
 
 // ─── Provider Integration ───────────────────────────────────────────────────
@@ -1048,7 +1067,7 @@ func TestMatchSemgrepBatch_NotInstalled(t *testing.T) {
 		},
 	}
 
-	issues := matchSemgrepBatch(context.Background(), rules, t.TempDir(), nil)
+	issues := matchSemgrepBatch(context.Background(), rules, t.TempDir(), nil, nil)
 	if len(issues) != 0 {
 		t.Errorf("expected 0 issues when semgrep not installed, got %d", len(issues))
 	}

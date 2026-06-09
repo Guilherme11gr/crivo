@@ -1,13 +1,15 @@
 {
   "name": "crivo",
   "version": "3.1.0",
-  "description": "Lightweight open-source alternative to SonarQube. Single binary that orchestrates OSS tools, calculates ratings, and enforces quality gates.",
+  "description": "Local quality gate for AI-agent coding workflows and CI. Runs core checks, consolidates output, and enforces project-specific rules.",
   "keywords": [
     "quality",
-    "sonarqube",
+    "ai-agents",
+    "agentic-coding",
+    "ci",
     "static-analysis",
     "code-quality",
-    "linter",
+    "custom-rules",
     "coverage",
     "duplication",
     "security"
