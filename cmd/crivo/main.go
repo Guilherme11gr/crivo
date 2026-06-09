@@ -32,7 +32,7 @@ import (
 	"github.com/guilherme11gr/crivo/internal/tui"
 )
 
-var version = "3.1.0"
+var version = "3.4.0"
 
 const helpText = `
   quality-gate — Lightweight quality gate for code analysis

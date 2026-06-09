@@ -1,16 +1,21 @@
 # crivo
 
-Quality gate local para fluxos com agentes de IA e CI. O `crivo` roda checks básicos, consolida a saída num formato único e aplica regras customizadas do projeto para barrar código ruim no fim de uma sessão de coding ou antes do merge.
+`crivo` é um quality gate local para projetos tocados por agentes de código e CI.
 
-Sem servidor, sem conta, sem stack paralela de observabilidade. Só `crivo run`.
+Ele roda ferramentas já existentes, normaliza os resultados e responde uma pergunta simples: esta mudança pode subir?
 
-## Pra quem é
+Não tem servidor, conta, dashboard externo ou runtime obrigatório além das ferramentas que o projeto já usa.
 
-- Times que já usam Claude Code, OpenCode ou outros agentes para escrever código
-- Projetos que precisam de um gate simples no fim da sessão do agente
-- Pipelines de CI que precisam bloquear regressões óbvias e regras específicas do time
+## O que ele faz
 
-O diferencial do `crivo` não é substituir uma plataforma inteira de code quality. É ser a camada final de verificação: tipos, cobertura, duplicação, secrets, segurança e regras customizadas do projeto num único resultado.
+- Detecta quais checks se aplicam ao projeto.
+- Executa os checks em paralelo, limitando ferramentas pesadas.
+- Gera saída para terminal, JSON, Markdown e SARIF.
+- Calcula ratings A-E para reliability, security e maintainability.
+- Aplica políticas de gate (`release`, `strict`, `informational`).
+- Analisa só código alterado com `--new-code`.
+- Permite regras customizadas por repositório no `.qualitygate.yaml`.
+- Salva histórico local em SQLite quando usado com `--save`.
 
 ## Instalação
 
@@ -18,7 +23,7 @@ O diferencial do `crivo` não é substituir uma plataforma inteira de code quali
 npm install -g crivo
 ```
 
-Ou via Go:
+Ou:
 
 ```bash
 go install github.com/guilherme11gr/crivo/cmd/crivo@latest
@@ -27,88 +32,62 @@ go install github.com/guilherme11gr/crivo/cmd/crivo@latest
 ## Uso
 
 ```bash
-crivo init                    # Cria config, workflow do GitHub Actions e skills do Claude Code
-crivo run                     # Roda o gate completo
-crivo run --json              # JSON estruturado (pra agentes/automação)
-crivo run --verbose           # Detalhes completos
-crivo run --tui               # Dashboard interativo
-crivo run --new-code          # Só código alterado (pra PRs/CI)
-crivo run --disable complexity # Desabilita checks específicos nesta execução
-crivo run --save              # Salva no histórico local pra acompanhar tendências
-crivo run --md report.md      # Saída em Markdown (pra comentários em PR)
-crivo run --sarif report.sarif # SARIF 2.1.0 (pra GitHub Code Scanning)
-crivo trends                  # Histórico com sparklines dos últimos runs
+crivo init                       # cria configuração inicial e workflow de CI
+crivo run                        # roda o gate completo
+crivo run --json                 # saída estruturada para agentes/automação
+crivo run --new-code             # analisa apenas arquivos/linhas alterados
+crivo run --md report.md         # gera resumo em Markdown
+crivo run --sarif report.sarif   # gera SARIF para code scanning
+crivo run --save                 # salva histórico local
+crivo trends                     # mostra tendência dos runs salvos
 ```
 
-## Como usar com agents
-
-Fluxo típico no fim da sessão:
-
-1. O agente implementa a mudança
-2. Roda `crivo run --json` para ter um resultado estruturado
-3. Corrige os problemas bloqueantes
-4. Opcionalmente roda `crivo run --md report.md --sarif report.sarif` no CI
-
-Exemplo de uso local:
-
-```bash
-crivo run --json
-```
-
-Exemplo de uso no CI:
+Para CI, o uso típico é:
 
 ```bash
 crivo run --new-code --md report.md --sarif report.sarif --save
 ```
 
-## O que analisa
+## Checks suportados
 
-| Check | Ferramenta | O que encontra |
-|-------|------------|----------------|
-| Type Safety | tsc | Erros de compilação TypeScript (separa prod de testes) |
-| Cobertura | jest/vitest | Cobertura de linhas, branches, funções, statements |
-| Duplicação | jscpd + análise semântica | Copy-paste e clones estruturais |
-| Complexidade | AST + fallback regex | Complexidade cognitiva por função |
-| Secrets | gitleaks | Credenciais e chaves hardcoded |
-| Segurança | semgrep | Padrões de vulnerabilidade (SAST) |
-| Código morto | knip | Exports, arquivos e dependências não utilizados |
-| Custom Rules | regex + semgrep | Regras customizadas definidas no config |
+| Check | Ferramenta | Escopo |
+| --- | --- | --- |
+| TypeScript | `tsc` | erros de tipo, separando produção e testes |
+| Coverage | `jest` / `vitest` | cobertura de linhas, branches, funções e statements |
+| Duplication | `jscpd` + heurística semântica | copy-paste e clones parecidos |
+| Complexity | AST JS/TS + fallback regex | complexidade cognitiva por função |
+| Secrets | `gitleaks` | credenciais e chaves hardcoded |
+| Security | `semgrep` | padrões de vulnerabilidade e hotspots |
+| Dead code | `knip` | exports, arquivos e dependências não usados |
+| Custom rules | regex + semgrep | regras específicas do projeto |
 
-Os checks rodam em paralelo. Cada um é opcional: o `crivo` só executa o que faz sentido pro projeto, baseado nos arquivos detectados e na configuração.
+Cada check é opcional. O `crivo` só roda o que faz sentido para o projeto detectado e para a configuração atual.
 
-## Onde ele encaixa
+## `--new-code`
 
-O `crivo` é mais útil em dois pontos do fluxo:
+`crivo run --new-code` compara a branch atual com a branch base e filtra findings para os arquivos e linhas alterados.
 
-1. No fim da sessão do agente, antes de considerar a tarefa concluída
-2. No CI, como gate de PR ou push
+Alguns providers também recebem esse escopo antes de rodar, para evitar trabalho desnecessário em checks pesados como `semgrep`, `gitleaks` e custom rules.
 
-Ele existe para responder uma pergunta simples: o agente entregou algo aceitável para esse repositório?
+Na branch principal, o modo compara `HEAD` com mudanças locais.
 
-## Ratings
+## Gate
 
-Três dimensões, de A até E:
+As políticas disponíveis são:
 
-- **Reliability** — baseado na quantidade e severidade de bugs
-- **Security** — baseado em vulnerabilidades e hotspots
-- **Maintainability** — baseado na razão de dívida técnica
+| Política | Comportamento |
+| --- | --- |
+| `release` | bloqueia erros de tipo em produção, secrets e custom rules bloqueantes |
+| `strict` | bloqueia também cobertura, duplicação e outros checks configurados |
+| `informational` | nunca bloqueia; apenas reporta |
 
-## Políticas de gate
-
-Controla o que bloqueia seu pipeline:
-
-| Política | Bloqueia em |
-|----------|-------------|
-| `release` (padrão) | Erros de tipo em produção, secrets |
-| `strict` | Tudo — cobertura, duplicação, qualquer check falhando |
-| `informational` | Nada — só reporta |
+Exemplo:
 
 ```yaml
-# .qualitygate.yaml
 gate-policy: release
 ```
 
-Ou override por execução:
+Ou por execução:
 
 ```bash
 crivo run --policy strict
@@ -116,13 +95,11 @@ crivo run --policy strict
 
 ## Configuração
 
-`crivo init` cria um `.qualitygate.yaml` com defaults razoáveis. Exemplo:
+`crivo init` cria um `.qualitygate.yaml`. Um exemplo mínimo:
 
 ```yaml
 profile: balanced
 gate-policy: release
-languages:
-  - typescript
 
 src:
   - src/
@@ -136,7 +113,7 @@ checks:
   typescript: true
   coverage: true
   duplication: true
-  secrets: false
+  secrets: true
   semgrep: false
   dead-code: false
   custom-rules: true
@@ -156,144 +133,61 @@ complexity:
   threshold: 15
 ```
 
-## Formatos de saída
+## Custom rules
 
-**Terminal** — UI com box-drawing colorido, ratings, resumo dos checks e contagem de issues.
+Custom rules ficam no `.qualitygate.yaml` e servem para regras locais que ferramentas genéricas não conhecem.
 
-**JSON** (`--json`) — saída estruturada completa. Útil para agentes decidirem se a sessão terminou, quais issues corrigir primeiro e o que bloqueia o gate:
+Tipos suportados:
 
-```json
-{
-  "status": "passed",
-  "checks": [
-    {
-      "id": "typescript",
-      "status": "warning",
-      "summary": "0 prod errors, 34 in tests",
-      "metrics": { "prod_errors": 0, "test_errors": 34, "errors": 34 }
-    }
-  ],
-  "ratings": { "Reliability": "A", "Security": "A", "Maintainability": "A" },
-  "conditions": [...]
-}
-```
+- `ban-import`
+- `ban-pattern`
+- `require-import`
+- `enforce-pattern`
+- `ban-dependency`
+- `max-lines`
+- `semgrep`
 
-**Markdown** (`--md report.md`) — pronto pra comentário de PR ou resumo legível no CI.
-
-**SARIF** (`--sarif report.sarif`) — SARIF 2.1.0, compatível com GitHub Code Scanning.
-
-## TUI
-
-`crivo run --tui` abre um dashboard interativo com três abas:
-
-- **Dashboard** — status do gate, ratings, resultado dos checks
-- **Issues** — lista navegável com filtro por tipo (bugs, vulnerabilidades, code smells)
-- **Trends** — sparklines de issues, cobertura e duplicação ao longo do tempo
-
-Navegação: Tab, setas, `q` pra sair.
-
-## Comparação com baseline
-
-Quando você usa `--save`, o crivo guarda os resultados num SQLite local (`.qualitygate/history.db`). Nas execuções seguintes, compara com o último run salvo:
-
-- Cobertura/complexidade que não pioraram são rebaixadas de "failed" pra "warning" (tolerância a dívida legada)
-- Regressões reais são sinalizadas explicitamente
-
-Isso significa que projetos existentes não são punidos por dívida histórica de uma vez só. O foco é bloquear regressão nova, especialmente útil em rollouts com agentes.
-
-## Integração com CI
-
-`crivo init` cria um workflow de GitHub Actions pronto. O fluxo:
-
-1. Roda `crivo run --md report.md --sarif report.sarif --save`
-2. Faz upload do SARIF pro GitHub Code Scanning
-3. Posta o markdown como comentário no PR
-
-Pra outros sistemas de CI, o crivo retorna exit code 1 quando o gate falha, 0 quando passa.
-
-## Suporte a linguagens
-
-O suporte mais completo hoje é para projetos TypeScript/JavaScript, que combinam type safety, coverage, duplicação, complexidade, secrets, segurança e dead code.
-
-Para outros stacks, o `crivo` já cobre partes úteis do gate, como duplicação, complexidade heurística, secrets e segurança, dependendo do layout do projeto e das ferramentas disponíveis.
-
-## Custom Rules
-
-Custom Rules são a peça principal do posicionamento do `crivo`: além dos checks básicos, você define o que o agente não pode fazer no seu repositório.
-
-As regras ficam no `.qualitygate.yaml` e podem ser regex-based ou AST-based via semgrep:
+Exemplo:
 
 ```yaml
 custom-rules:
-  # Proíbe imports diretos — force uso de wrappers
-  - id: no-date-libs
-    type: ban-import
-    packages: ["date-fns", "moment", "dayjs"]
-    allow-subpaths: ["locale"]
-    allow-in: ["**/shared/utils/date-utils.ts"]
-    message: "Use date-utils wrapper"
-    severity: blocker
-
-  # Bloqueia patterns com regex
   - id: no-console-log
     type: ban-pattern
     pattern: "console\\.(?:log|debug)\\("
     files: "src/**/*.{ts,tsx}"
-    message: "Use logger ao invés de console.log"
+    message: "Use logger em vez de console.log"
     severity: major
 
-  # Semgrep — match semântico com AST
-  - id: no-manual-cents
-    type: semgrep
-    pattern: "$X / 100"
-    pattern-not-inside: "function centsToReais(...) { ... }"
-    metavariable-regex:
-      "$X": ".*[Cc]ents.*"
-    message: "Use centsToReais()"
-    severity: major
-
-  # Bloqueia dependências no package.json
   - id: no-axios
     type: ban-dependency
     packages: ["axios", "got", "node-fetch"]
-    message: "Projeto usa fetch nativo"
+    message: "Use fetch nativo"
     severity: blocker
 
-  # Limita tamanho de arquivo
   - id: component-max-300
     type: max-lines
     max-lines: 300
     files: "src/components/**/*.tsx"
-    message: "Componente muito grande, extraia subcomponentes"
+    message: "Componente muito grande"
     severity: major
     mode: advisory
 ```
 
-**8 tipos de regra:** `ban-import`, `ban-pattern`, `require-import`, `enforce-pattern`, `ban-dependency`, `max-lines`, `semgrep`
+`mode: advisory` reporta a violação, mas não bloqueia o gate.
 
-**Smart defaults:** `ignore-comments` e `ignore-tests` são `true` por padrão para ban-pattern/ban-import.
+## Saídas
 
-**Advisory mode:** `mode: advisory` reporta mas não bloqueia o gate — útil pra rollout gradual de regras novas para agentes e times.
+- Terminal: resumo visual com status, ratings, checks e issues.
+- JSON: formato completo para agentes e automação.
+- Markdown: relatório legível para PRs.
+- SARIF: integração com GitHub Code Scanning.
+- TUI: dashboard local com `crivo run --tui`.
 
-## Como funciona
+## Histórico
 
-O crivo não implementa nenhuma análise. Ele orquestra ferramentas existentes:
+Com `--save`, o `crivo` grava os runs em `.qualitygate/history.db`.
 
-1. Lê `.qualitygate.yaml` pra configuração
-2. Detecta quais checks se aplicam (baseado nos arquivos do projeto)
-3. Roda as ferramentas aplicáveis em paralelo
-4. Parseia a saída de cada ferramenta num formato normalizado
-5. Calcula ratings A-E
-6. Avalia as condições do gate conforme a política configurada
-7. Gera saída para terminal, agentes, CI e code scanning
-
-Zero CGO. Binário único. Sem dependências de runtime além das ferramentas em si (node, go, python — o que seu projeto já usa).
-
-## Posicionamento
-
-Se você já usa agentes para escrever código, o `crivo` funciona como a última barreira entre "parece pronto" e "está pronto para subir".
-
-Ele não tenta ser uma plataforma monolítica de qualidade. Ele tenta ser um gate pragmático, automatizável e extensível com regras do seu time.
+Isso alimenta `crivo trends` e permite comparação com baseline local, útil para não tratar toda dívida histórica como regressão nova.
 
 ## Licença
 
