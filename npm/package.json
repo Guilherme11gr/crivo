@@ -1,6 +1,6 @@
 {
   "name": "crivo",
-  "version": "3.4.2",
+  "version": "3.4.3",
   "description": "Local quality gate for AI-agent coding workflows and CI. Runs core checks, consolidates output, and enforces project-specific rules.",
   "keywords": [
     "quality",
@@ -23,7 +23,8 @@
     "crivo": "bin/crivo.js"
   },
   "scripts": {
-    "postinstall": "node install.js"
+    "install-binary": "node install.js",
+    "test": "node --test install.test.js"
   },
   "files": [
     "bin/",

@@ -2,20 +2,30 @@
 "use strict";
 
 const { execFileSync } = require("child_process");
-const path = require("path");
-const os = require("os");
+const { ensureBinary } = require("../install");
 
-const binaryName = os.platform() === "win32" ? "crivo.exe" : "crivo";
-const binaryPath = path.join(__dirname, binaryName);
-
-try {
-  execFileSync(binaryPath, process.argv.slice(2), { stdio: "inherit" });
-} catch (err) {
-  if (err.status !== undefined) {
-    process.exit(err.status);
+async function main() {
+  let binaryPath;
+  try {
+    binaryPath = await ensureBinary();
+  } catch (err) {
+    console.error(`Failed to install crivo: ${err.message}`);
+    process.exitCode = 1;
+    return;
   }
-  console.error(`Failed to run crivo: ${err.message}`);
-  console.error(`Expected binary at: ${binaryPath}`);
-  console.error(`Run: npm rebuild crivo`);
-  process.exit(1);
+
+  try {
+    execFileSync(binaryPath, process.argv.slice(2), { stdio: "inherit" });
+  } catch (err) {
+    if (err.status !== undefined) {
+      process.exitCode = err.status;
+      return;
+    }
+    console.error(`Failed to run crivo: ${err.message}`);
+    console.error(`Expected binary at: ${binaryPath}`);
+    console.error(`Run: node node_modules/crivo/install.js`);
+    process.exitCode = 1;
+  }
 }
+
+main();

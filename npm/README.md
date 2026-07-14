@@ -8,6 +8,10 @@ Local quality gate for AI-agent coding workflows and CI. `crivo` runs core check
 npm install -g crivo
 ```
 
+Installing the npm package does not download or build the native binary. The
+first `crivo` command downloads the matching release on demand, with a bounded
+timeout. To install the binary explicitly, run `node node_modules/crivo/install.js`.
+
 ## Quick Start
 
 ```bash
