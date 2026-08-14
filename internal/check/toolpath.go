@@ -40,7 +40,7 @@ func withNodeHeap(env []string) []string {
 		if existing == "" {
 			env[i] = "NODE_OPTIONS=--max-old-space-size=" + heap
 		} else {
-			env[i] = existing + " --max-old-space-size=" + heap
+			env[i] = "NODE_OPTIONS=" + existing + " --max-old-space-size=" + heap
 		}
 		return env
 	}
