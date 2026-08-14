@@ -139,8 +139,25 @@ complexity:
 |---|---|---|
 | `CRIVO_MAX_WORKERS` | Máximo de checks rodando em paralelo (clamp 1..16). | Local: `max(NumCPU/4, 1)` limitado a 2; CI: `max(NumCPU/2, 2)` limitado a 4 |
 | `CRIVO_MAX_HEAVY` | Máximo de checks "heavy" (tsc, complexity, coverage, duplication, semgrep, secrets, dead-code) rodando simultaneamente (clamp 1..16). | Local: 1; CI: 2 |
+| `CRIVO_NO_AUTO_INSTALL` | `1` impede o download automático de ferramentas (gitleaks/semgrep). | Desativado (auto-install permitido) |
 
 Valores inválidos (não numéricos) são ignorados e o default é usado.
+
+## Segurança e integridade
+
+O `crivo` baixa e executa código de terceiros (o próprio binário via npm, e as
+ferramentas `gitleaks` e `semgrep`). Para que isso seja seguro e reprodutível:
+
+- **Binário via npm**: o `install.js` verifica o SHA-256 do download contra o
+  `checksums.txt` publicado no release (GoReleaser) antes de instalar. Checksum
+  ausente ou divergente é erro duro — o binário nunca é instalado.
+- **gitleaks**: versão pinada (`8.24.3`) com checksum SHA-256 embutido no
+  binário, verificado antes da extração, e download com timeout de 60s.
+- **semgrep**: versão pinada (`pip install semgrep==<versão>`). Atualizar o pin
+  é uma release note do crivo — mudanças de findings são intencionais.
+- **Opt-out de auto-install**: defina `CRIVO_NO_AUTO_INSTALL=1` para impedir que
+  o `crivo` baixe qualquer ferramenta automaticamente. Ferramentas ausentes
+  viram checks pulados/avisos visíveis em vez de instalação silenciosa.
 
 ## Custom rules
 
