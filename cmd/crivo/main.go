@@ -191,7 +191,11 @@ func runAnalysis(opts options) int {
 	defer releaseRunLock()
 
 	// Load config
-	cfg, configSource := config.Load(projectDir)
+	cfg, configSource, err := config.Load(projectDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+		return 1
+	}
 
 	// CLI --policy overrides config
 	if opts.policy != "" {

@@ -551,6 +551,74 @@ export const x = 1
 	}
 }
 
+func TestProvider_Analyze_GlobMissIsVisible(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = 1\n")
+
+	cfg := config.DefaultConfig()
+	cfg.CustomRules = []config.CustomRule{
+		{ID: "no-todo", Type: "ban-pattern", Pattern: "TODO", Message: "No TODOs", Files: "src/**/*.py"},
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusPassed {
+		t.Fatalf("expected passed (glob miss is not a violation), got %s", result.Status)
+	}
+
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "no-todo") && strings.Contains(d, "matched 0 files") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a glob-miss detail naming the rule, got %#v", result.Details)
+	}
+}
+
+func TestProvider_Analyze_UnreadableFileIsVisible(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not block reads")
+	}
+
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = 1\n")
+	writeFile(t, srcDir, "locked.ts", "const y = 2\n")
+	if err := os.Chmod(filepath.Join(srcDir, "locked.ts"), 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(filepath.Join(srcDir, "locked.ts"), 0644) })
+
+	cfg := config.DefaultConfig()
+	cfg.CustomRules = []config.CustomRule{
+		{ID: "no-todo", Type: "ban-pattern", Pattern: "TODO", Message: "No TODOs", Files: "src/**/*.ts"},
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "could not read") && strings.Contains(d, "src/locked.ts") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a read-error detail naming the file, got %#v", result.Details)
+	}
+}
+
 func TestProvider_Analyze_NoRules(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.CustomRules = nil
@@ -930,24 +998,10 @@ func TestCompileRules_SemgrepRequiresPattern(t *testing.T) {
 	}
 }
 
-func TestMatchSemgrep_NotInstalled(t *testing.T) {
-	// Force semgrep unavailable: strip it from PATH and disable auto-install so
-	// the test never attempts a real pip install.
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
-
-	rule := CompiledRule{
-		Raw:      config.CustomRule{ID: "no-eval", Pattern: "eval(...)", Message: "No eval"},
-		Type:     RuleTypeSemgrep,
-		Severity: domain.SeverityBlocker,
-		Language: "ts",
-	}
-
-	issues := matchSemgrep(context.Background(), rule, t.TempDir(), []string{"test.ts"})
-	if len(issues) != 0 {
-		t.Errorf("expected 0 issues when semgrep not installed, got %d", len(issues))
-	}
-}
+// TestMatchSemgrep_NotInstalled was the single-rule path test; the single-rule
+// path was deleted (plan 006). Its intent — 0 issues when semgrep is not
+// installed — is covered by TestMatchSemgrepBatch_NotInstalled below, which
+// also asserts the skip detail.
 
 func TestHasAdvancedSemgrepOptions(t *testing.T) {
 	tests := []struct {
@@ -971,7 +1025,7 @@ func TestHasAdvancedSemgrepOptions(t *testing.T) {
 	}
 }
 
-func TestBuildSemgrepConfigFile(t *testing.T) {
+func TestBuildSemgrepBatchConfig_AdvancedRule(t *testing.T) {
 	rule := CompiledRule{
 		Raw: config.CustomRule{
 			ID:                "no-cents-div",
@@ -983,7 +1037,7 @@ func TestBuildSemgrepConfigFile(t *testing.T) {
 		Language: "ts",
 	}
 
-	path, err := buildSemgrepConfigFile(rule)
+	path, err := buildSemgrepBatchConfig([]CompiledRule{rule})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1013,7 +1067,7 @@ func TestBuildSemgrepConfigFile(t *testing.T) {
 	}
 }
 
-func TestBuildSemgrepConfigFile_AllOptions(t *testing.T) {
+func TestBuildSemgrepBatchConfig_AllOptions(t *testing.T) {
 	rule := CompiledRule{
 		Raw: config.CustomRule{
 			ID:               "complex-rule",
@@ -1029,7 +1083,7 @@ func TestBuildSemgrepConfigFile_AllOptions(t *testing.T) {
 		Language: "ts",
 	}
 
-	path, err := buildSemgrepConfigFile(rule)
+	path, err := buildSemgrepBatchConfig([]CompiledRule{rule})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1357,6 +1411,29 @@ func TestMatchSemgrepBatch_StubEndToEnd(t *testing.T) {
 	}
 	if iss.Remediation != domain.CustomRuleRemediation("semgrep", "Do not use eval") {
 		t.Errorf("expected semgrep remediation on batch finding, got %q", iss.Remediation)
+	}
+}
+
+func TestMatchSemgrepBatch_StubAdvisoryRuleGetsAdvisoryRemediation(t *testing.T) {
+	projectDir := t.TempDir()
+	srcDir := filepath.Join(projectDir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = eval(y)\n")
+
+	semgrepStubBin(t)
+
+	rule := semgrepRule("no-eval", "eval(...)", "Do not use eval")
+	rule.Advisory = true
+
+	issues, details := matchSemgrepBatch(context.Background(), []CompiledRule{rule}, projectDir, nil, nil)
+	if len(details) != 0 {
+		t.Fatalf("expected no error details, got %#v", details)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d: %#v", len(issues), issues)
+	}
+	if got := issues[0].Remediation; got != domain.CustomRuleRemediation("advisory", "Do not use eval") {
+		t.Errorf("expected advisory remediation for an advisory rule, got %q", got)
 	}
 }
 

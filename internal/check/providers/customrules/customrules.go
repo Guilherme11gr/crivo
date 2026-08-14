@@ -26,7 +26,10 @@ func (p *Provider) ID() string   { return "custom-rules" }
 
 // Detect returns true if custom rules are configured
 func (p *Provider) Detect(_ context.Context, projectDir string) bool {
-	cfg, _ := config.Load(projectDir)
+	cfg, _, err := config.Load(projectDir)
+	if err != nil {
+		return false
+	}
 	return len(cfg.CustomRules) > 0
 }
 
@@ -120,6 +123,15 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 				continue
 			}
 
+			// A glob that matched nothing would silently report "no violations"
+			// — a typo'd pattern is a rule that never runs. Surface it.
+			if len(files) == 0 {
+				for _, rule := range rules {
+					details = append(details, fmt.Sprintf("rule '%s': glob '%s' matched 0 files — check the pattern (supported: *, **, ?, {a,b}; no […])", rule.Raw.ID, glob))
+				}
+				continue
+			}
+
 			for _, file := range files {
 				// Check context
 				select {
@@ -134,6 +146,9 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 				absPath := filepath.Join(projectDir, file)
 				data, err := os.ReadFile(absPath)
 				if err != nil {
+					// Unreadable files are not violations, but skipping them in
+					// silence hides rules that never saw the file they target.
+					details = append(details, fmt.Sprintf("rule(s) %s: could not read '%s': %v", ruleIDList(rules), file, err))
 					continue
 				}
 
