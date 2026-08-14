@@ -40,8 +40,9 @@ func (p *Provider) Name() string { return "Secrets" }
 func (p *Provider) ID() string   { return "secrets" }
 
 func (p *Provider) Detect(_ context.Context, _ string) bool {
-	path, err := check.EnsureTool("gitleaks")
-	return err == nil && path != ""
+	// FindTool only (no network): auto-install happens in Analyze, which runs
+	// with the 5-minute per-check context and concurrently with other checks.
+	return check.FindTool("gitleaks") != ""
 }
 
 func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Config) (*domain.CheckResult, error) {
@@ -179,10 +180,20 @@ func gitleaksTargets(ctx context.Context, projectDir string) []string {
 	return []string{projectDir}
 }
 
+// gitleaksChunkSize is the maximum number of targets passed to a single
+// gitleaks invocation. Kept at 1: gitleaks 8.24.3 (pinned version) reads
+// --source as a single string flag and ignores positional args, so batching
+// multiple targets into one invocation would silently scan only the last one.
+// The chunking structure stays so a future gitleaks version that accepts
+// multiple targets can raise this without changing the call sites.
+const gitleaksChunkSize = 1
+
 func runGitleaksTargets(ctx context.Context, gitleaksBin, projectDir string, targets []string) ([]gitleaksResult, error) {
 	var all []gitleaksResult
-	for _, target := range targets {
-		results, err := runGitleaksTarget(ctx, gitleaksBin, target)
+	for start := 0; start < len(targets); start += gitleaksChunkSize {
+		end := min(start+gitleaksChunkSize, len(targets))
+		chunk := targets[start:end]
+		results, err := runGitleaksTarget(ctx, gitleaksBin, chunk)
 		if err != nil {
 			return nil, err
 		}
@@ -191,20 +202,24 @@ func runGitleaksTargets(ctx context.Context, gitleaksBin, projectDir string, tar
 	return all, nil
 }
 
-func runGitleaksTarget(ctx context.Context, gitleaksBin, target string) ([]gitleaksResult, error) {
+func runGitleaksTarget(ctx context.Context, gitleaksBin string, targets []string) ([]gitleaksResult, error) {
 	reportPath, cleanup, err := gitleaksReportTarget()
 	if err != nil {
 		return nil, err
 	}
 	defer cleanup()
 
-	cmd := exec.CommandContext(ctx, gitleaksBin, "detect",
-		"--source="+target,
+	args := []string{"detect",
 		"--report-format=json",
-		"--report-path="+reportPath,
+		"--report-path=" + reportPath,
 		"--no-git",
 		"--no-banner",
-	)
+	}
+	for _, target := range targets {
+		args = append(args, "--source="+target)
+	}
+
+	cmd := exec.CommandContext(ctx, gitleaksBin, args...)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
