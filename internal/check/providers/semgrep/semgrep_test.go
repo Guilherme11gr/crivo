@@ -6,7 +6,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/guilherme11gr/crivo/internal/check"
@@ -323,5 +325,85 @@ func TestSemgrepTargets_UsesChangedFilesScope(t *testing.T) {
 	}
 	if !strings.HasSuffix(filepath.ToSlash(targets[0]), "src/rule.ts") {
 		t.Fatalf("unexpected target %q", targets[0])
+	}
+}
+
+func TestSemgrepTargets_NoScope_UsesConfigSrc(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Src = []string{"src/", "lib/"}
+	targets := semgrepTargets(context.Background(), t.TempDir(), cfg)
+	if len(targets) != 2 {
+		t.Fatalf("expected 2 targets from cfg.Src, got %d: %#v", len(targets), targets)
+	}
+}
+
+// ─── Fail-closed: empty scope never passes ───────────────────────────────────
+
+// semgrepQuietStub installs a shared stub semgrep binary (emits an empty
+// results JSON) and puts its directory at the front of PATH. Shared across
+// tests because check.FindTool caches positive lookups process-wide.
+func semgrepQuietStub(t *testing.T) {
+	t.Helper()
+	semgrepStubOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "crivo-semgrep-stub-*")
+		if err != nil {
+			t.Fatalf("create stub dir: %v", err)
+		}
+		semgrepStubDir = dir
+		bin := filepath.Join(dir, "semgrep")
+		if runtime.GOOS == "windows" {
+			bin += ".exe"
+		}
+		script := "#!/bin/sh\necho '{\"results\": [], \"errors\": []}'\n"
+		if runtime.GOOS == "windows" {
+			script = "@echo off\necho {\"results\": [], \"errors\": []}\n"
+		}
+		if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+			t.Fatalf("write stub: %v", err)
+		}
+	})
+	t.Setenv("PATH", semgrepStubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+var (
+	semgrepStubOnce sync.Once
+	semgrepStubDir  string
+)
+
+func TestAnalyze_ActiveScopeZeroTargets_StatusError(t *testing.T) {
+	projectDir := t.TempDir()
+	semgrepQuietStub(t)
+
+	// Scope contains only non-relevant files (README.md) → 0 scannable targets.
+	ctx := check.WithNewCodeScope(context.Background(), check.NewScope(
+		[]gitutil.ChangedFile{{Path: "README.md"}},
+		nil,
+	))
+
+	p := New()
+	result, err := p.Analyze(ctx, projectDir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusError {
+		t.Fatalf("expected StatusError for active scope with 0 targets, got %s (summary %q)", result.Status, result.Summary)
+	}
+	if !strings.Contains(result.Summary, "0 scannable targets") {
+		t.Errorf("expected summary to mention 0 scannable targets, got %q", result.Summary)
+	}
+	if len(result.Details) == 0 {
+		t.Error("expected a detail instructing to check the diff")
+	}
+}
+
+func TestAnalyze_NoScope_ZeroFindingsUnchanged(t *testing.T) {
+	// Without a scope, an empty targets list is impossible in practice
+	// (semgrepTargets falls back to cfg.Src or "."), but the no-scope branch
+	// must remain a plain pass — mirror the previous behavior.
+	cfg := config.DefaultConfig()
+	cfg.Src = []string{}
+	targets := semgrepTargets(context.Background(), t.TempDir(), cfg)
+	if len(targets) != 1 {
+		t.Fatalf("expected fallback to [.] without scope, got %d: %#v", len(targets), targets)
 	}
 }

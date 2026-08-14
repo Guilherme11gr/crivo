@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/guilherme11gr/crivo/internal/config"
@@ -929,11 +931,10 @@ func TestCompileRules_SemgrepRequiresPattern(t *testing.T) {
 }
 
 func TestMatchSemgrep_NotInstalled(t *testing.T) {
-	// Force semgrep unavailable
-	avail := false
-	old := semgrepAvailable
-	semgrepAvailable = &avail
-	defer func() { semgrepAvailable = old }()
+	// Force semgrep unavailable: strip it from PATH and disable auto-install so
+	// the test never attempts a real pip install.
+	t.Setenv("PATH", "/nonexistent-bin")
+	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
 
 	rule := CompiledRule{
 		Raw:      config.CustomRule{ID: "no-eval", Pattern: "eval(...)", Message: "No eval"},
@@ -1050,11 +1051,10 @@ func TestBuildSemgrepConfigFile_AllOptions(t *testing.T) {
 // ─── Semgrep Batch ──────────────────────────────────────────────────────────
 
 func TestMatchSemgrepBatch_NotInstalled(t *testing.T) {
-	// Force semgrep unavailable
-	avail := false
-	old := semgrepAvailable
-	semgrepAvailable = &avail
-	defer func() { semgrepAvailable = old }()
+	// Force semgrep unavailable: strip it from PATH and disable auto-install so
+	// the test never attempts a real pip install.
+	t.Setenv("PATH", "/nonexistent-bin")
+	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
 
 	rules := []CompiledRule{
 		{
@@ -1071,9 +1071,20 @@ func TestMatchSemgrepBatch_NotInstalled(t *testing.T) {
 		},
 	}
 
-	issues := matchSemgrepBatch(context.Background(), rules, t.TempDir(), nil, nil)
+	issues, details := matchSemgrepBatch(context.Background(), rules, t.TempDir(), nil, nil)
 	if len(issues) != 0 {
 		t.Errorf("expected 0 issues when semgrep not installed, got %d", len(issues))
+	}
+	if len(details) != 1 {
+		t.Fatalf("expected 1 detail listing skipped rules, got %d: %#v", len(details), details)
+	}
+	if !strings.Contains(details[0], "semgrep unavailable") || !strings.Contains(details[0], "2 rules skipped") {
+		t.Errorf("expected unavailable detail with rule count, got %q", details[0])
+	}
+	for _, id := range []string{"no-eval", "no-exec"} {
+		if !strings.Contains(details[0], id) {
+			t.Errorf("expected skipped detail to list rule %q, got %q", id, details[0])
+		}
 	}
 }
 
@@ -1191,6 +1202,276 @@ func TestBuildSemgrepBatchConfig_MixedSimpleAndAdvanced(t *testing.T) {
 	// The advanced rule should use 'patterns' (plural) key
 	if !strings.Contains(content, "patterns:") {
 		t.Error("advanced rule should use 'patterns' key")
+	}
+}
+
+// ─── Semgrep unavailable (must run before stub tests cache a positive lookup) ─
+//
+// check.FindTool caches positive lookups for the process lifetime and Go runs
+// tests in source order — so "unavailable" tests must be defined BEFORE the
+// stub tests below, or the cached stub path would make semgrep look available.
+
+func TestProvider_Analyze_SemgrepUnavailableWarns(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = 1\n")
+
+	// Strip semgrep from PATH and disable auto-install so this never attempts
+	// a real pip install.
+	t.Setenv("PATH", "/nonexistent-bin")
+	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+
+	cfg := config.DefaultConfig()
+	cfg.CustomRules = []config.CustomRule{
+		{ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "Do not use eval", Severity: "blocker"},
+		{ID: "no-exec", Type: "semgrep", Pattern: "exec(...)", Message: "Do not use exec"},
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusWarning {
+		t.Fatalf("expected warning when semgrep rules cannot run, got %s (summary %q)", result.Status, result.Summary)
+	}
+	if !strings.Contains(result.Summary, "SKIPPED") {
+		t.Errorf("expected SKIPPED in summary, got %q", result.Summary)
+	}
+	if !strings.Contains(result.Summary, "2 semgrep rules SKIPPED") {
+		t.Errorf("expected 2 skipped semgrep rules in summary, got %q", result.Summary)
+	}
+	var hasEval, hasExec bool
+	for _, d := range result.Details {
+		if strings.Contains(d, "no-eval") {
+			hasEval = true
+		}
+		if strings.Contains(d, "no-exec") {
+			hasExec = true
+		}
+	}
+	if !hasEval || !hasExec {
+		t.Errorf("expected details to list both rule IDs, got %#v", result.Details)
+	}
+}
+
+// ─── Semgrep stub end-to-end ─────────────────────────────────────────────────
+//
+// check.FindTool caches positive lookups for the process lifetime, so the stub
+// binary is created once per package (sync.Once) and shared by all stub tests.
+// Its behavior is selected by CRIVO_SEMGREP_STUB_MODE (inherited by the
+// subprocess through os.Environ):
+//   - "fail"    → exit 3 with a stderr message
+//   - "empty"   → valid JSON with zero results
+//   - (default) → valid JSON with one finding for rule "no-eval" (path
+//     resolved relative to the subprocess cwd, which matchSemgrepBatch sets to
+//     the project dir) plus an unknown check_id that must be ignored
+
+var (
+	semgrepStubOnce sync.Once
+	semgrepStubDir  string
+)
+
+func semgrepStubBin(t *testing.T) {
+	t.Helper()
+	semgrepStubOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "crivo-customrules-semgrep-stub-*")
+		if err != nil {
+			t.Fatalf("create stub dir: %v", err)
+		}
+		semgrepStubDir = dir
+		bin := filepath.Join(dir, "semgrep")
+		if runtime.GOOS == "windows" {
+			bin += ".exe"
+		}
+		script := `#!/bin/sh
+if [ "$CRIVO_SEMGREP_STUB_MODE" = "fail" ]; then
+  echo "semgrep: internal error: rule no-eval crashed" >&2
+  exit 3
+fi
+if [ "$CRIVO_SEMGREP_STUB_MODE" = "empty" ]; then
+  echo '{"results": [], "errors": []}'
+  exit 0
+fi
+cat <<EOF
+{"results": [{"check_id": "no-eval", "path": "$PWD/src/app.ts", "start": {"line": 3, "col": 5}, "extra": {"lines": "eval(x)"}}, {"check_id": "unknown.rule", "path": "$PWD/src/app.ts", "start": {"line": 9, "col": 1}, "extra": {"lines": "x"}}], "errors": []}
+EOF
+`
+		if runtime.GOOS == "windows" {
+			script = `@echo off
+if "%CRIVO_SEMGREP_STUB_MODE%"=="fail" (
+  echo semgrep: internal error: rule no-eval crashed 1>&2
+  exit /b 3
+)
+if "%CRIVO_SEMGREP_STUB_MODE%"=="empty" (
+  echo {"results": [], "errors": []}
+  exit /b 0
+)
+echo {"results": [{"check_id": "no-eval", "path": "%CD%\src\app.ts", "start": {"line": 3, "col": 5}, "extra": {"lines": "eval(x)"}}, {"check_id": "unknown.rule", "path": "%CD%\src\app.ts", "start": {"line": 9, "col": 1}, "extra": {"lines": "x"}}], "errors": []}
+`
+		}
+		if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+			t.Fatalf("write stub: %v", err)
+		}
+	})
+	t.Setenv("PATH", semgrepStubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// semgrepRule is a minimal compiled semgrep rule fixture.
+func semgrepRule(id, pattern, message string) CompiledRule {
+	return CompiledRule{
+		Raw:      config.CustomRule{ID: id, Pattern: pattern, Message: message, Files: "src/**/*.ts"},
+		Type:     RuleTypeSemgrep,
+		Severity: domain.SeverityBlocker,
+		Language: "ts",
+	}
+}
+
+func TestMatchSemgrepBatch_StubEndToEnd(t *testing.T) {
+	projectDir := t.TempDir()
+	srcDir := filepath.Join(projectDir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = eval(y)\n")
+
+	semgrepStubBin(t)
+
+	rules := []CompiledRule{semgrepRule("no-eval", "eval(...)", "Do not use eval")}
+
+	issues, details := matchSemgrepBatch(context.Background(), rules, projectDir, nil, nil)
+	if len(details) != 0 {
+		t.Fatalf("expected no error details, got %#v", details)
+	}
+	if len(issues) != 1 {
+		t.Fatalf("expected 1 issue (unknown check_id must be ignored), got %d: %#v", len(issues), issues)
+	}
+	iss := issues[0]
+	if iss.RuleID != "no-eval" {
+		t.Errorf("expected rule ID no-eval from check_id mapping, got %q", iss.RuleID)
+	}
+	if iss.File != "src/app.ts" {
+		t.Errorf("expected relative path src/app.ts, got %q", iss.File)
+	}
+	if iss.Line != 3 || iss.Column != 5 {
+		t.Errorf("expected line 3 col 5, got line %d col %d", iss.Line, iss.Column)
+	}
+	if iss.Remediation != domain.CustomRuleRemediation("semgrep", "Do not use eval") {
+		t.Errorf("expected semgrep remediation on batch finding, got %q", iss.Remediation)
+	}
+}
+
+func TestMatchSemgrepBatch_StubAllowInFiltersFinding(t *testing.T) {
+	projectDir := t.TempDir()
+	srcDir := filepath.Join(projectDir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = eval(y)\n")
+
+	semgrepStubBin(t)
+
+	rule := semgrepRule("no-eval", "eval(...)", "Do not use eval")
+	rule.AllowInGlobs = []string{"src/app.ts"}
+
+	issues, details := matchSemgrepBatch(context.Background(), []CompiledRule{rule}, projectDir, nil, nil)
+	if len(details) != 0 {
+		t.Fatalf("expected no error details, got %#v", details)
+	}
+	if len(issues) != 0 {
+		t.Errorf("expected 0 issues when the finding path is allow-listed, got %d: %#v", len(issues), issues)
+	}
+}
+
+func TestMatchSemgrepBatch_StubSubprocessError(t *testing.T) {
+	projectDir := t.TempDir()
+	srcDir := filepath.Join(projectDir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = eval(y)\n")
+
+	semgrepStubBin(t)
+	t.Setenv("CRIVO_SEMGREP_STUB_MODE", "fail")
+
+	rules := []CompiledRule{semgrepRule("no-eval", "eval(...)", "Do not use eval")}
+
+	issues, details := matchSemgrepBatch(context.Background(), rules, projectDir, nil, nil)
+	if len(issues) != 0 {
+		t.Errorf("expected 0 issues from a failing stub, got %d", len(issues))
+	}
+	if len(details) != 1 {
+		t.Fatalf("expected 1 error detail, got %d: %#v", len(details), details)
+	}
+	if !strings.Contains(details[0], "semgrep failed for rules no-eval") {
+		t.Errorf("expected failure detail naming the rule, got %q", details[0])
+	}
+	if !strings.Contains(details[0], "internal error") {
+		t.Errorf("expected stderr snippet in the detail, got %q", details[0])
+	}
+}
+
+func TestProvider_Analyze_SemgrepFindingsWithStub(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = eval(y)\n")
+
+	semgrepStubBin(t)
+
+	cfg := config.DefaultConfig()
+	cfg.CustomRules = []config.CustomRule{
+		{ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "Do not use eval", Severity: "blocker", Files: "src/**/*.ts"},
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusFailed {
+		t.Fatalf("expected failed for a blocker semgrep finding, got %s (summary %q)", result.Status, result.Summary)
+	}
+	if len(result.Issues) != 1 {
+		t.Fatalf("expected 1 issue, got %d: %#v", len(result.Issues), result.Issues)
+	}
+	iss := result.Issues[0]
+	if iss.RuleID != "no-eval" || iss.File != "src/app.ts" || iss.Line != 3 {
+		t.Errorf("unexpected issue mapping: %+v", iss)
+	}
+	if iss.Remediation != domain.CustomRuleRemediation("semgrep", "Do not use eval") {
+		t.Errorf("expected semgrep remediation on batch finding, got %q", iss.Remediation)
+	}
+	// No skip/failure details: the semgrep rules actually ran.
+	for _, d := range result.Details {
+		if strings.HasPrefix(d, "semgrep unavailable") || strings.HasPrefix(d, "semgrep failed") {
+			t.Errorf("unexpected semgrep failure detail on a clean stub run: %q", d)
+		}
+	}
+}
+
+func TestProvider_Analyze_SemgrepRunsCleanWithStub(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = 1\n")
+
+	semgrepStubBin(t)
+	t.Setenv("CRIVO_SEMGREP_STUB_MODE", "empty")
+
+	cfg := config.DefaultConfig()
+	cfg.CustomRules = []config.CustomRule{
+		{ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "Do not use eval", Severity: "blocker", Files: "src/**/*.ts"},
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusPassed {
+		t.Fatalf("expected passed after a real (stubbed) scan with no findings, got %s (summary %q)", result.Status, result.Summary)
+	}
+	if !strings.Contains(result.Summary, "1 rules checked · no violations") {
+		t.Errorf("expected clean summary, got %q", result.Summary)
+	}
+	if len(result.Details) != 0 {
+		t.Errorf("expected no details on a clean run, got %#v", result.Details)
 	}
 }
 

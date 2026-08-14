@@ -71,6 +71,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 
 	var allIssues []domain.Issue
+	var details []string
 
 	// Separate rules by execution strategy
 	var fileRules []CompiledRule
@@ -88,9 +89,12 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 
 	// Run semgrep rules — batch all rules into minimal semgrep invocations (grouped by file glob)
+	// Details are non-empty when semgrep is unavailable or a group failed to scan:
+	// those rules must never be reported as "checked".
 	if len(semgrepRules) > 0 {
-		issues := matchSemgrepBatch(ctx, semgrepRules, projectDir, cfg.Exclude, scopedFiles)
+		issues, semgrepDetails := matchSemgrepBatch(ctx, semgrepRules, projectDir, cfg.Exclude, scopedFiles)
 		allIssues = append(allIssues, issues...)
+		details = append(details, semgrepDetails...)
 	}
 
 	// Group file rules by their file glob to minimize walks
@@ -160,6 +164,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 
 	result.Issues = allIssues
 	result.Duration = time.Since(start)
+	result.Details = details
 	advisoryViolations := 0
 	blockingViolations := 0
 	for _, issue := range allIssues {
@@ -197,13 +202,51 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}
 	}
 
-	if blockingIssues == 0 {
+	// Semgrep rules that could not be scanned (binary unavailable or the
+	// subprocess failed) must never be reported as "checked". The skip/failure
+	// details list rule IDs verbatim — count the non-advisory ones that were
+	// actually skipped; they force a warning instead of a pass.
+	pendingSemgrep := 0
+	if len(details) > 0 {
+		ids := map[string]bool{}
+		for _, rule := range semgrepRules {
+			ids[rule.Raw.ID] = true
+		}
+		skipped := map[string]bool{}
+		for _, d := range details {
+			if !strings.HasPrefix(d, "semgrep unavailable") && !strings.HasPrefix(d, "semgrep failed") {
+				continue
+			}
+			rest := d
+			if i := strings.Index(rest, ": "); i >= 0 {
+				rest = rest[i+2:]
+			}
+			for _, tok := range strings.FieldsFunc(rest, func(r rune) bool { return r == ',' || r == ' ' }) {
+				tok = strings.Trim(tok, ":")
+				if ids[tok] {
+					skipped[tok] = true
+				}
+			}
+		}
+		for _, rule := range semgrepRules {
+			if !rule.Advisory && skipped[rule.Raw.ID] {
+				pendingSemgrep++
+			}
+		}
+	}
+
+	if blockingIssues == 0 && pendingSemgrep == 0 {
 		result.Status = domain.StatusPassed
 		if len(allIssues) == 0 {
 			result.Summary = fmt.Sprintf("%d rules checked · no violations", len(compiled))
 		} else {
 			result.Summary = fmt.Sprintf("%d rules checked · %d advisory-only violations", len(compiled), len(allIssues))
 		}
+	} else if blockingIssues == 0 && pendingSemgrep > 0 {
+		// A security control that reports success without having scanned is
+		// worse than the absence of the control: surface the skip as a warning.
+		result.Status = domain.StatusWarning
+		result.Summary = fmt.Sprintf("%d rules checked · %d semgrep rules SKIPPED (semgrep unavailable)", len(compiled), pendingSemgrep)
 	} else {
 		if hasBlocker {
 			result.Status = domain.StatusFailed
