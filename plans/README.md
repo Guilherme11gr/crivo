@@ -28,10 +28,10 @@ Verificação padrão para todos os planos (repo Go, sem CGO):
 | 002 | Controles de segurança fail-closed (secrets/semgrep nunca passam sem escanear) | P1 | M | 001 | DONE (merge ec27e49; maskSecret sem substrings, semgrep skip visível com rule IDs) |
 | 003 | O gate não mente: falha de provider é error; rating/config truth | P1 | M | — | DONE (merge 78a05ce; errored_checks bloqueia release, thresholds do config valem, baseline opt-in) |
 | 004 | Perf quick wins (gitleaks batch, regex pré-compilado, heavy classification, workers) | P2 | S | — | DONE (merge 29b1a1d; gitleaks 8.24.3 não aceita multi-target — chunk=1 documentado, allocs/op -98,6%) |
-| 005 | Coverage honra new-code + duplication/complexity em todos os `src` | P2 | M | 001, 003 | TODO |
-| 006 | Custom rules: confiança do motor (yaml loud, remediation, glob-miss, walkers) | P2 | M | — | TODO |
+| 005 | Coverage honra new-code + duplication/complexity em todos os `src` | P2 | M | 001, 003 | DONE (merge c78e0b0; `coverage.new-code: off|related|full` default off — suite não roda mais em modo PR; caveat: flags `related` validadas via stub, runners reais pendentes) |
+| 006 | Custom rules: confiança do motor (yaml loud, remediation, glob-miss, walkers) | P2 | M | — | DONE (merge b86cc86; yaml quebrado = exit 1, exclude por path relativo, caminho single-rule morto deletado) |
 | 007 | Supply chain: checksums, pins, opt-out de auto-install, versão single-source | P2 | M | — | DONE (merge 5d24fa2; semgrep pin 1.173.0) |
-| 008 | Custom rules state of the art: fixtures de regra, template regenerado, spike de packs | P3 | M/L | 006 | TODO |
+| 008 | Custom rules state of the art: fixtures de regra, template regenerado, spike de packs | P3 | M/L | 006 | DONE (merge a4d7974; spike COMPLETOU: packs embedded `pack:security-ts`; review pegou 2 bugs que stub não via: check_id namespaced do semgrep — quebrava o runtime batch silenciosamente — e dialecto ts/.tsx nas fixtures) |
 
 Status: TODO | IN PROGRESS | DONE | BLOCKED (motivo em 1 linha) | REJECTED (racional em 1 linha).
 
