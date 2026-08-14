@@ -142,6 +142,54 @@ func truncateStderr(s string) string {
 	return s
 }
 
+// ComputeNewCodeScope computes the changed files/lines for --new-code mode.
+// The base ref is resolved with an origin/ fallback so CI checkouts (detached
+// HEAD, remote-only refs) work. Errors are fatal by design: an unresolvable
+// base, a failed diff, or an empty diff outside working-tree mode is reported
+// instead of silently analyzing the whole repo as "new code".
+func ComputeNewCodeScope(ctx context.Context, projectDir, requestedBase string) ([]ChangedFile, []ChangedLine, error) {
+	baseBranch := requestedBase
+	if baseBranch == "" {
+		b, err := DefaultBranch(ctx, projectDir)
+		if err != nil {
+			return nil, nil, err
+		}
+		baseBranch = b
+	}
+
+	baseRef, err := ResolveBaseRef(ctx, projectDir, baseBranch)
+	if err != nil {
+		return nil, nil, fmt.Errorf("--new-code: cannot resolve base branch '%s' (tried %s, origin/%s): %w", baseBranch, baseBranch, baseBranch, err)
+	}
+
+	currentBranch, _ := CurrentBranch(ctx, projectDir)
+	diffRef := baseRef
+	headRef := "HEAD"
+	if currentBranch == baseBranch {
+		// Working-tree mode: diff the base against the working tree.
+		diffRef = "HEAD"
+		headRef = ""
+	}
+
+	changedFiles, err := GetChangedFiles(ctx, projectDir, diffRef, headRef)
+	if err != nil {
+		return nil, nil, fmt.Errorf("--new-code: cannot diff against '%s': %w", baseRef, err)
+	}
+	changedLines, err := GetChangedLines(ctx, projectDir, diffRef, headRef)
+	if err != nil {
+		return nil, nil, fmt.Errorf("--new-code: cannot diff against '%s': %w", baseRef, err)
+	}
+
+	// An empty diff is only legitimate when the current branch IS the base
+	// (working-tree mode). Otherwise the base did not resolve to a real ref,
+	// and analyzing nothing would silently skip the whole gate.
+	if len(changedFiles) == 0 && currentBranch != baseBranch {
+		return nil, nil, fmt.Errorf("--new-code: diff against %s is empty — nothing to analyze", baseRef)
+	}
+
+	return changedFiles, changedLines, nil
+}
+
 // GetChangedFiles returns files changed between base and head
 func GetChangedFiles(ctx context.Context, projectDir, base, head string) ([]ChangedFile, error) {
 	var args []string
