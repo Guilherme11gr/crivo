@@ -11,8 +11,10 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 	gitutil "github.com/guilherme11gr/crivo/internal/git"
+	"github.com/guilherme11gr/crivo/internal/store"
 )
 
 func TestParseArgs_DisableChecksSupportsRepeatAndCommaList(t *testing.T) {
@@ -134,8 +136,13 @@ func TestFilterCheckToNewCode_RecomputesDuplicationMetrics(t *testing.T) {
 	if check.Status != domain.StatusFailed {
 		t.Fatalf("status = %s, want failed", check.Status)
 	}
-	if got := check.Metrics["percentage"]; got != 100 {
-		t.Fatalf("percentage = %v, want 100", got)
+	// percentage must never be fabricated from a filtered subset — the
+	// duplication_pct condition only exists when a real analysis produced it.
+	if _, hasPct := check.Metrics["percentage"]; hasPct {
+		t.Fatalf("percentage = %v, want metric absent after new-code filter", check.Metrics["percentage"])
+	}
+	if got := check.Metrics["new_code_clones"]; got != 1 {
+		t.Fatalf("new_code_clones = %v, want 1", got)
 	}
 	if got := check.Metrics["semantic_clones"]; got != 1 {
 		t.Fatalf("semantic_clones = %v, want 1", got)
@@ -145,8 +152,82 @@ func TestFilterCheckToNewCode_RecomputesDuplicationMetrics(t *testing.T) {
 	if check.Status != domain.StatusPassed {
 		t.Fatalf("status after empty filter = %s, want passed", check.Status)
 	}
-	if got := check.Metrics["percentage"]; got != 0 {
-		t.Fatalf("percentage after empty filter = %v, want 0", got)
+	if got := check.Metrics["new_code_clones"]; got != 0 {
+		t.Fatalf("new_code_clones after empty filter = %v, want 0", got)
+	}
+	if _, hasPct := check.Metrics["percentage"]; hasPct {
+		t.Fatalf("percentage = %v, want metric absent after empty filter", check.Metrics["percentage"])
+	}
+}
+
+func TestFilterCheckToNewCode_RecomputesCoverageWithoutNewCodeData(t *testing.T) {
+	// Coverage data is whole-repo; after filtering, no new-code coverage data
+	// exists, so the check must warn and drop the metrics (no stale condition).
+	check := domain.CheckResult{
+		ID:     "coverage",
+		Status: domain.StatusFailed,
+		Summary: "60.0% lines · 50.0% branches (min: 60%/50%)",
+		Issues: []domain.Issue{
+			{File: "src/legacy.ts", Line: 1, RuleID: "low-coverage"},
+		},
+		Metrics: map[string]float64{"lines": 60, "branches": 50, "functions": 60, "statements": 60},
+	}
+
+	filterCheckToNewCode(&check, map[string]bool{"src/changed.ts": true}, nil)
+
+	if check.Status != domain.StatusWarning {
+		t.Fatalf("status = %s, want warning (no coverage data in new code)", check.Status)
+	}
+	if check.Summary != "no coverage data in new code" {
+		t.Fatalf("summary = %q", check.Summary)
+	}
+	if _, hasLines := check.Metrics["lines"]; hasLines {
+		t.Fatal("lines metric must be dropped without new-code coverage data")
+	}
+}
+
+func TestFilterCheckToNewCode_RecomputesDeadCode(t *testing.T) {
+	check := domain.CheckResult{
+		ID:     "dead-code",
+		Status: domain.StatusFailed,
+		Issues: []domain.Issue{
+			{File: "src/legacy.ts", Line: 1, RuleID: "unused-file"},
+			{File: "src/changed.ts", Line: 5, RuleID: "unused-export"},
+		},
+		Metrics: map[string]float64{"unused_files": 1, "unused_exports": 1},
+	}
+
+	filterCheckToNewCode(&check, map[string]bool{"src/changed.ts": true}, []gitutil.ChangedLine{{File: "src/changed.ts", StartLine: 1, EndLine: 10}})
+
+	if check.Status != domain.StatusWarning {
+		t.Fatalf("status = %s, want warning", check.Status)
+	}
+	if got := check.Metrics["unused_files"]; got != 0 {
+		t.Fatalf("unused_files = %v, want 0", got)
+	}
+	if got := check.Metrics["unused_exports"]; got != 1 {
+		t.Fatalf("unused_exports = %v, want 1", got)
+	}
+}
+
+func TestFilterCheckToNewCode_RecomputesComplexity(t *testing.T) {
+	check := domain.CheckResult{
+		ID:     "complexity",
+		Status: domain.StatusFailed,
+		Issues: []domain.Issue{
+			{File: "src/legacy.ts", Line: 1, RuleID: "cognitive-complexity"},
+			{File: "src/changed.ts", Line: 5, RuleID: "cognitive-complexity"},
+		},
+		Metrics: map[string]float64{"violations": 2},
+	}
+
+	filterCheckToNewCode(&check, map[string]bool{"src/changed.ts": true}, []gitutil.ChangedLine{{File: "src/changed.ts", StartLine: 1, EndLine: 10}})
+
+	if check.Status != domain.StatusWarning {
+		t.Fatalf("status = %s, want warning (1 violation in new code)", check.Status)
+	}
+	if got := check.Metrics["violations"]; got != 1 {
+		t.Fatalf("violations = %v, want 1", got)
 	}
 }
 
@@ -179,10 +260,172 @@ func TestApplyBaselineComparison_DoesNotCreateStoreWithoutHistory(t *testing.T) 
 	projectDir := t.TempDir()
 	analysis := &domain.AnalysisResult{}
 
-	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true})
+	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true}, config.DefaultConfig())
 
 	if _, err := os.Stat(filepath.Join(projectDir, ".qualitygate")); !os.IsNotExist(err) {
 		t.Fatalf(".qualitygate existence error = %v, want not exist", err)
+	}
+}
+
+// saveBaseline persists a baseline run for the given branch/mode so baseline
+// comparison tests have a history to compare against.
+func saveBaseline(t *testing.T, projectDir, branch, mode string, metrics map[string]float64) {
+	t.Helper()
+	s, err := store.Open(projectDir)
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer s.Close()
+
+	// Metrics are aggregated as <checkID>_<metric>; build checks carrying the
+	// values so the aggregation produces the expected keys.
+	coverageMetrics := map[string]float64{}
+	complexityMetrics := map[string]float64{}
+	for k, v := range metrics {
+		switch k {
+		case "coverage_lines":
+			coverageMetrics["lines"] = v
+		case "complexity_violations":
+			complexityMetrics["violations"] = v
+		}
+	}
+	var checks []domain.CheckResult
+	if len(coverageMetrics) > 0 {
+		checks = append(checks, domain.CheckResult{ID: "coverage", Metrics: coverageMetrics})
+	}
+	if len(complexityMetrics) > 0 {
+		checks = append(checks, domain.CheckResult{ID: "complexity", Metrics: complexityMetrics})
+	}
+
+	result := &domain.AnalysisResult{
+		ProjectDir: projectDir,
+		Status:     domain.GatePassed,
+		Checks:     checks,
+	}
+	if _, err := s.SaveAnalysis(result, branch, "", mode); err != nil {
+		t.Fatalf("SaveAnalysis: %v", err)
+	}
+}
+
+func TestApplyBaselineComparison_NoDowngradeWithoutFlag(t *testing.T) {
+	projectDir := t.TempDir()
+	saveBaseline(t, projectDir, "main", "overall", map[string]float64{"coverage_lines": 80})
+
+	analysis := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:      "coverage",
+				Status:  domain.StatusFailed,
+				Metrics: map[string]float64{"lines": 75},
+			},
+		},
+	}
+
+	// Default config: legacy-debt-tolerance is false — no downgrade.
+	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true, branch: "main"}, config.DefaultConfig())
+
+	if analysis.Checks[0].Status != domain.StatusFailed {
+		t.Fatalf("status = %s, want failed (downgrade must be opt-in)", analysis.Checks[0].Status)
+	}
+}
+
+func TestApplyBaselineComparison_DowngradeWithFlag(t *testing.T) {
+	projectDir := t.TempDir()
+	saveBaseline(t, projectDir, "main", "overall", map[string]float64{"coverage_lines": 80})
+
+	analysis := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:      "coverage",
+				Status:  domain.StatusFailed,
+				Metrics: map[string]float64{"lines": 80},
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Baseline.LegacyDebtTolerance = true
+	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true, branch: "main"}, cfg)
+
+	if analysis.Checks[0].Status != domain.StatusWarning {
+		t.Fatalf("status = %s, want warning (legacy debt tolerated)", analysis.Checks[0].Status)
+	}
+}
+
+func TestApplyBaselineComparison_RegressionStillFailsWithFlag(t *testing.T) {
+	projectDir := t.TempDir()
+	saveBaseline(t, projectDir, "main", "overall", map[string]float64{"coverage_lines": 80})
+
+	analysis := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:      "coverage",
+				Status:  domain.StatusFailed,
+				Metrics: map[string]float64{"lines": 75},
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Baseline.LegacyDebtTolerance = true
+	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true, branch: "main"}, cfg)
+
+	// A real regression (80 → 75) must stay failed even with the flag on.
+	if analysis.Checks[0].Status != domain.StatusFailed {
+		t.Fatalf("status = %s, want failed (regression must not be downgraded)", analysis.Checks[0].Status)
+	}
+}
+
+func TestApplyBaselineComparison_MissingBaselineMetricIsNotZero(t *testing.T) {
+	projectDir := t.TempDir()
+	// Baseline exists but has no complexity_violations metric.
+	saveBaseline(t, projectDir, "main", "overall", map[string]float64{"coverage_lines": 80})
+
+	analysis := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:      "complexity",
+				Status:  domain.StatusFailed,
+				Metrics: map[string]float64{"violations": 3},
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Baseline.LegacyDebtTolerance = true
+	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true, branch: "main"}, cfg)
+
+	// Absence of the metric must not read as 0 (which would downgrade every
+	// failed run) — the check stays failed and no baseline metrics are set.
+	if analysis.Checks[0].Status != domain.StatusFailed {
+		t.Fatalf("status = %s, want failed (missing baseline metric must not count as 0)", analysis.Checks[0].Status)
+	}
+	if _, has := analysis.Checks[0].Metrics["baseline_violations"]; has {
+		t.Fatal("baseline_violations must not be set when the baseline lacks the metric")
+	}
+}
+
+func TestApplyBaselineComparison_IgnoresOtherBranchOrMode(t *testing.T) {
+	projectDir := t.TempDir()
+	// Baseline saved for a different branch+mode pair.
+	saveBaseline(t, projectDir, "feature", "new-code", map[string]float64{"coverage_lines": 80})
+
+	analysis := &domain.AnalysisResult{
+		Checks: []domain.CheckResult{
+			{
+				ID:      "coverage",
+				Status:  domain.StatusFailed,
+				Metrics: map[string]float64{"lines": 75},
+			},
+		},
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Baseline.LegacyDebtTolerance = true
+	applyBaselineComparison(analysis, projectDir, options{jsonOutput: true, branch: "main"}, cfg)
+
+	if analysis.Checks[0].Status != domain.StatusFailed {
+		t.Fatalf("status = %s, want failed (baseline from another branch/mode must not apply)", analysis.Checks[0].Status)
 	}
 }
 

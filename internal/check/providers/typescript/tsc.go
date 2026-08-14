@@ -110,10 +110,28 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 		}
 	}
 
-	// If tsc exited non-zero but we found no parseable errors, treat as passed
-	if totalErrors == 0 {
-		status = domain.StatusPassed
-		summary = "0 errors"
+	// If tsc exited non-zero but we found no parseable errors, the tool itself
+	// failed (crash, missing config, etc.) — report the truth instead of a
+	// pass. A green gate must mean green.
+	if err != nil && totalErrors == 0 {
+		excerpt := strings.TrimSpace(stderr.String())
+		if excerpt == "" {
+			excerpt = strings.TrimSpace(stdout.String())
+		}
+		if len(excerpt) > 300 {
+			excerpt = excerpt[:300] + "..."
+		}
+		if excerpt == "" {
+			excerpt = "tsc exited with an error but produced no parseable output"
+		}
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusError,
+			Summary:  "tsc failed: " + excerpt,
+			Details:  []string{excerpt},
+			Duration: duration,
+		}, nil
 	}
 
 	// Show prod issues first, then test issues

@@ -93,3 +93,27 @@ func TestGenerateDefault(t *testing.T) {
 		t.Error("GenerateDefault returned empty data")
 	}
 }
+
+func TestLoad_QualityGateOverallCoverageOverridesThreshold(t *testing.T) {
+	dir := t.TempDir()
+	configContent := `
+profile: balanced
+quality-gate:
+  overall:
+    coverage: 70
+    duplications: 8
+`
+	err := os.WriteFile(filepath.Join(dir, ".qualitygate.yaml"), []byte(configContent), 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _ := Load(dir)
+
+	if cfg.QualityGate.Overall.Coverage != 70 {
+		t.Errorf("Overall.Coverage = %f, want 70", cfg.QualityGate.Overall.Coverage)
+	}
+	if cfg.QualityGate.Overall.Duplications != 8 {
+		t.Errorf("Overall.Duplications = %f, want 8", cfg.QualityGate.Overall.Duplications)
+	}
+}

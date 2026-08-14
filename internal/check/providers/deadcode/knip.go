@@ -74,6 +74,28 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, _ *config.Con
 	issues, unusedFiles, unusedExports, unusedDeps := parseKnipOutput(output, projectDir)
 
 	if len(issues) == 0 {
+		// knip crashed or failed to run (but is installed) — report the truth
+		// instead of a fabricated "No dead code detected" pass.
+		if runErr != nil {
+			errMsg := strings.TrimSpace(stderr.String())
+			if errMsg == "" {
+				errMsg = strings.TrimSpace(stdout.String())
+			}
+			if len(errMsg) > 300 {
+				errMsg = errMsg[:300] + "..."
+			}
+			if errMsg == "" {
+				errMsg = "knip exited with an error but produced no parseable output"
+			}
+			return &domain.CheckResult{
+				Name:     p.Name(),
+				ID:       p.ID(),
+				Status:   domain.StatusError,
+				Summary:  "knip failed: " + errMsg,
+				Details:  []string{errMsg},
+				Duration: duration,
+			}, nil
+		}
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),

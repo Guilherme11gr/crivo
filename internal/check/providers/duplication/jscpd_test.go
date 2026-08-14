@@ -5,11 +5,58 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
+
+// stubNpx installs a fake npx executable in PATH that runs the given script
+// body (a shell snippet) and returns the cleanup function.
+func stubNpx(t *testing.T, script string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("npx stub uses a POSIX shell script")
+	}
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "npx")
+	content := "#!/bin/sh\n" + script + "\n"
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAnalyze_NoReportIsErrorWithoutFabricatedMetrics(t *testing.T) {
+	// jscpd fails to run (exit 1, no report file) — the check must be an
+	// error and must NOT fabricate percentage/clones metrics that would
+	// produce a passing duplication_pct condition.
+	stubNpx(t, `echo "jscpd: command crashed" >&2; exit 1`)
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	if result.Status != domain.StatusError {
+		t.Fatalf("status = %s, want error", result.Status)
+	}
+	if result.Metrics != nil {
+		if _, hasPct := result.Metrics["percentage"]; hasPct {
+			t.Fatal("percentage metric must not exist when no analysis happened")
+		}
+		if _, hasClones := result.Metrics["clones"]; hasClones {
+			t.Fatal("clones metric must not exist when no analysis happened")
+		}
+	}
+}
 
 func TestParseJscpdReport_NoDuplicates(t *testing.T) {
 	report := jscpdReport{}

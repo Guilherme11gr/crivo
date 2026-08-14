@@ -131,7 +131,8 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	reportPath := filepath.Join(reportDir, "jscpd-report.json")
 	data, err := os.ReadFile(reportPath)
 	if err != nil {
-		// Check if jscpd actually ran — if stderr has content, report the error
+		// No report means no analysis happened — report the truth as an
+		// error instead of fabricating a passing 0% duplication metric.
 		stderrStr := stderr.String()
 		stdoutStr := stdout.String()
 		errMsg := "No jscpd report generated"
@@ -143,11 +144,10 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),
-			Status:   domain.StatusWarning,
+			Status:   domain.StatusError,
 			Summary:  errMsg,
 			Duration: duration,
 			Details:  []string{"jscpd report not found at " + reportPath, "stderr: " + stderrStr},
-			Metrics:  map[string]float64{"percentage": 0, "clones": 0},
 		}, nil
 	}
 

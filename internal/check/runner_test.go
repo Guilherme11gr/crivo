@@ -22,6 +22,19 @@ func TestIsCheckEnabled_HonorsCLIDisabledChecks(t *testing.T) {
 	}
 }
 
+func TestIsCheckEnabled_ComplexityHonorsConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+
+	if !isCheckEnabled("complexity", cfg, nil) {
+		t.Fatal("expected complexity to be enabled by default")
+	}
+
+	cfg.Checks.Complexity = false
+	if isCheckEnabled("complexity", cfg, nil) {
+		t.Fatal("expected complexity to be disabled when checks.complexity is false")
+	}
+}
+
 func TestDefaultMaxWorkers_LocalIsConservative(t *testing.T) {
 	t.Setenv("CI", "")
 	workers := defaultMaxWorkers()

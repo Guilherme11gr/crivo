@@ -4,10 +4,72 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
+
+// stubNpx installs a fake npx executable in PATH that runs the given script
+// body (a shell snippet) and returns the cleanup function.
+func stubNpx(t *testing.T, script string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("npx stub uses a POSIX shell script")
+	}
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "npx")
+	content := "#!/bin/sh\n" + script + "\n"
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAnalyze_KnipCrashedIsError(t *testing.T) {
+	// knip is installed but crashes (npm error enoent) — the check must be
+	// an error, not a fabricated "No dead code detected" pass.
+	stubNpx(t, `echo "npm error enoent ENOENT: no such file or directory" >&2; exit 1`)
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	if result.Status != domain.StatusError {
+		t.Fatalf("status = %s, want error (crashed knip must not pass)", result.Status)
+	}
+	if result.Summary == "No dead code detected" {
+		t.Fatalf("summary must not claim no dead code, got %q", result.Summary)
+	}
+}
+
+func TestAnalyze_KnipNotInstalledIsSkipped(t *testing.T) {
+	// "command not found" keeps the existing skip behavior.
+	stubNpx(t, `echo "sh: knip: command not found" >&2; exit 127`)
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	if result.Status != domain.StatusSkipped {
+		t.Fatalf("status = %s, want skipped (knip not installed)", result.Status)
+	}
+}
 
 func TestParseKnipOutput_Empty(t *testing.T) {
 	issues, unusedFiles, unusedExports, unusedDeps := parseKnipOutput("", "/project")

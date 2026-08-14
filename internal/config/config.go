@@ -28,6 +28,7 @@ type Config struct {
 	Exclude     []string          `yaml:"exclude" json:"exclude"`
 	Checks      ChecksConfig      `yaml:"checks" json:"checks"`
 	QualityGate QualityGateConfig `yaml:"quality-gate" json:"qualityGate"`
+	Baseline    BaselineConfig    `yaml:"baseline" json:"baseline"`
 	Coverage    CoverageConfig    `yaml:"coverage" json:"coverage"`
 	Duplication DuplicationConfig `yaml:"duplication" json:"duplication"`
 	Complexity  ComplexityConfig  `yaml:"complexity" json:"complexity"`
@@ -35,13 +36,22 @@ type Config struct {
 }
 
 type ChecksConfig struct {
-	Typescript bool `yaml:"typescript" json:"typescript"`
-	Semgrep    bool `yaml:"semgrep" json:"semgrep"`
-	Coverage   bool `yaml:"coverage" json:"coverage"`
+	Typescript  bool `yaml:"typescript" json:"typescript"`
+	Semgrep     bool `yaml:"semgrep" json:"semgrep"`
+	Coverage    bool `yaml:"coverage" json:"coverage"`
 	Duplication bool `yaml:"duplication" json:"duplication"`
-	Secrets    bool `yaml:"secrets" json:"secrets"`
+	Secrets     bool `yaml:"secrets" json:"secrets"`
 	DeadCode    bool `yaml:"dead-code" json:"deadCode"`
 	CustomRules bool `yaml:"custom-rules" json:"customRules"`
+	Complexity  bool `yaml:"complexity" json:"complexity"`
+}
+
+// BaselineConfig controls the baseline comparison behavior.
+type BaselineConfig struct {
+	// LegacyDebtTolerance downgrades failed coverage/complexity checks to
+	// warnings when the current run has not regressed vs the last saved run.
+	// Opt-in only: default false, because a green gate must mean green.
+	LegacyDebtTolerance bool `yaml:"legacy-debt-tolerance" json:"legacyDebtTolerance"`
 }
 
 type QualityGateConfig struct {
@@ -128,6 +138,7 @@ func DefaultConfig() *Config {
 			Secrets:     false,
 			DeadCode:    false,
 			CustomRules: true,
+			Complexity:  true,
 		},
 		QualityGate: QualityGateConfig{
 			NewCode: ThresholdConfig{

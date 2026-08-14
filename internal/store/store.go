@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS analyses (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_dir TEXT NOT NULL,
 	branch TEXT DEFAULT '',
+	mode TEXT DEFAULT '',
 	commit_hash TEXT DEFAULT '',
 	status TEXT NOT NULL,
 	total_issues INTEGER DEFAULT 0,
@@ -83,6 +84,12 @@ CREATE INDEX IF NOT EXISTS idx_analyses_created ON analyses(created_at);
 CREATE INDEX IF NOT EXISTS idx_lifecycle_status ON issue_lifecycle(status);
 `
 
+// branchModeIndex is created after the mode column migration, since it
+// references the column and legacy databases may not have it yet.
+const branchModeIndex = `
+CREATE INDEX IF NOT EXISTS idx_analyses_branch_mode ON analyses(project_dir, branch, mode);
+`
+
 // Open creates or opens the SQLite store
 func Open(projectDir string) (*Store, error) {
 	storeDir := filepath.Join(projectDir, ".qualitygate")
@@ -107,7 +114,47 @@ func Open(projectDir string) (*Store, error) {
 		return nil, fmt.Errorf("create schema: %w", err)
 	}
 
+	// Migrate databases created before the mode column existed. CREATE TABLE
+	// IF NOT EXISTS does not alter existing tables, so add the column with a
+	// simple ALTER when it is missing.
+	if err := ensureColumn(db, "analyses", "mode", "TEXT DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+	if _, err := db.Exec(branchModeIndex); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create branch/mode index: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+// ensureColumn adds a column to a table when it does not exist yet.
+func ensureColumn(db *sql.DB, table, column, definition string) error {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, colType string
+		var notNull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &colType, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
+	return err
 }
 
 // Close closes the database connection
@@ -115,8 +162,9 @@ func (s *Store) Close() error {
 	return s.db.Close()
 }
 
-// SaveAnalysis persists an analysis result
-func (s *Store) SaveAnalysis(result *domain.AnalysisResult, branch, commit string) (int64, error) {
+// SaveAnalysis persists an analysis result. mode distinguishes run flavors
+// (e.g. "overall" vs "new-code") so baselines only compare like-for-like.
+func (s *Store) SaveAnalysis(result *domain.AnalysisResult, branch, commit, mode string) (int64, error) {
 	ratingsJSON, _ := json.Marshal(result.Ratings)
 
 	// Aggregate metrics from all checks
@@ -130,9 +178,9 @@ func (s *Store) SaveAnalysis(result *domain.AnalysisResult, branch, commit strin
 	checksJSON, _ := json.Marshal(result.Checks)
 
 	res, err := s.db.Exec(`
-		INSERT INTO analyses (project_dir, branch, commit_hash, status, total_issues, ratings_json, metrics_json, checks_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		result.ProjectDir, branch, commit, string(result.Status),
+		INSERT INTO analyses (project_dir, branch, mode, commit_hash, status, total_issues, ratings_json, metrics_json, checks_json)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		result.ProjectDir, branch, mode, commit, string(result.Status),
 		result.TotalIssues, string(ratingsJSON), string(metricsJSON), string(checksJSON),
 	)
 	if err != nil {
@@ -187,15 +235,17 @@ func (s *Store) GetTrend(projectDir string, limit int) ([]TrendPoint, error) {
 	return points, nil
 }
 
-// GetLastMetrics returns the metrics from the most recent saved analysis for a project.
-// Used for baseline comparison (e.g., coverage regression detection).
-func (s *Store) GetLastMetrics(projectDir string) (map[string]float64, error) {
+// GetLastMetrics returns the metrics from the most recent saved analysis for
+// a project, branch and mode. Used for baseline comparison (e.g., coverage
+// regression detection) — only runs of the same branch+mode pair are
+// comparable, so a baseline from another branch or mode is never used.
+func (s *Store) GetLastMetrics(projectDir, branch, mode string) (map[string]float64, error) {
 	var metricsStr string
 	err := s.db.QueryRow(`
 		SELECT metrics_json FROM analyses
-		WHERE project_dir = ?
-		ORDER BY created_at DESC
-		LIMIT 1`, projectDir).Scan(&metricsStr)
+		WHERE project_dir = ? AND branch = ? AND mode = ?
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1`, projectDir, branch, mode).Scan(&metricsStr)
 	if err != nil {
 		return nil, err
 	}
