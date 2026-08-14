@@ -133,6 +133,15 @@ complexity:
   threshold: 15
 ```
 
+### Variáveis de ambiente
+
+| Variável | Descrição | Default |
+|---|---|---|
+| `CRIVO_MAX_WORKERS` | Máximo de checks rodando em paralelo (clamp 1..16). | Local: `max(NumCPU/4, 1)` limitado a 2; CI: `max(NumCPU/2, 2)` limitado a 4 |
+| `CRIVO_MAX_HEAVY` | Máximo de checks "heavy" (tsc, complexity, coverage, duplication, semgrep, secrets, dead-code) rodando simultaneamente (clamp 1..16). | Local: 1; CI: 2 |
+
+Valores inválidos (não numéricos) são ignorados e o default é usado.
+
 ## Custom rules
 
 Custom rules ficam no `.qualitygate.yaml` e servem para regras locais que ferramentas genéricas não conhecem.

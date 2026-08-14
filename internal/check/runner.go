@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -43,23 +44,37 @@ func NewRunner(registry *Registry, maxWorkers int) *Runner {
 	}
 }
 
+// envInt reads an integer env var, falling back to fallback when unset or
+// invalid, and clamps the result to [1, 16].
+func envInt(name string, fallback int) int {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return min(max(v, 1), 16)
+}
+
 func defaultMaxWorkers() int {
 	if os.Getenv("CI") == "true" {
-		return min(max(runtime.NumCPU()/2, 2), 4)
+		return envInt("CRIVO_MAX_WORKERS", min(max(runtime.NumCPU()/2, 2), 4))
 	}
-	return min(max(runtime.NumCPU()/4, 1), 2)
+	return envInt("CRIVO_MAX_WORKERS", min(max(runtime.NumCPU()/4, 1), 2))
 }
 
 func defaultHeavyWorkers() int {
 	if os.Getenv("CI") == "true" {
-		return 2
+		return envInt("CRIVO_MAX_HEAVY", 2)
 	}
-	return 1
+	return envInt("CRIVO_MAX_HEAVY", 1)
 }
 
 func isHeavyProviderID(id string) bool {
 	switch id {
-	case "coverage", "duplication", "semgrep", "secrets", "dead-code":
+	case "coverage", "duplication", "semgrep", "secrets", "dead-code", "typescript", "complexity":
 		return true
 	default:
 		return false
