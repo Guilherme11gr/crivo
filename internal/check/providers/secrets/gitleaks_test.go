@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -278,5 +279,123 @@ func TestGitleaksTargets_UsesChangedFilesScope(t *testing.T) {
 	}
 	if !strings.HasSuffix(filepath.ToSlash(targets[0]), "src/secret.ts") {
 		t.Fatalf("unexpected target %q", targets[0])
+	}
+}
+
+// ─── Stub binary tests ───────────────────────────────────────────────────────
+
+// gitleaksStubBin writes a fake gitleaks binary that records every invocation
+// (args) to a log file and emits a fixed JSON report on stdout. The report
+// references a file inside projectDir so normalization can be asserted.
+// Returns the binary path and the log file path.
+func gitleaksStubBin(t *testing.T, projectDir string) (binPath, logPath string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath = filepath.Join(dir, "invocations.log")
+	binPath = filepath.Join(dir, "gitleaks")
+	if runtime.GOOS == "windows" {
+		binPath += ".exe"
+	}
+
+	reportedFile := filepath.ToSlash(filepath.Join(projectDir, "src", "config.ts"))
+	script := `#!/bin/sh
+echo "$@" >> "` + logPath + `"
+cat <<'EOF'
+[{"Description":"AWS Access Key","StartLine":10,"EndLine":10,"StartColumn":15,"EndColumn":35,"File":"` + reportedFile + `","Entropy":3.5,"RuleID":"aws-access-key-id","Fingerprint":"abc123","Match":"AKIAIOSFODNN7EXAMPLE"}]
+EOF
+`
+	if runtime.GOOS == "windows" {
+		script = `@echo off
+echo %*>> "` + logPath + `"
+echo [{"Description":"AWS Access Key","StartLine":10,"EndLine":10,"StartColumn":15,"EndColumn":35,"File":"` + reportedFile + `","Entropy":3.5,"RuleID":"aws-access-key-id","Fingerprint":"abc123","Match":"AKIAIOSFODNN7EXAMPLE"}]
+`
+	}
+
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	return binPath, logPath
+}
+
+func readInvocations(t *testing.T, logPath string) []string {
+	t.Helper()
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read invocations log: %v", err)
+	}
+	var invocations []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		if line != "" {
+			invocations = append(invocations, line)
+		}
+	}
+	return invocations
+}
+
+func TestRunGitleaksTargets_SingleInvocationPerChunk(t *testing.T) {
+	projectDir := t.TempDir()
+	binPath, logPath := gitleaksStubBin(t, projectDir)
+
+	targets := []string{
+		filepath.Join(projectDir, "src", "a.ts"),
+		filepath.Join(projectDir, "src", "b.ts"),
+		filepath.Join(projectDir, "src", "c.ts"),
+	}
+
+	results, err := runGitleaksTargets(context.Background(), binPath, projectDir, targets)
+	if err != nil {
+		t.Fatalf("runGitleaksTargets() error = %v", err)
+	}
+
+	// gitleaks 8.24.3 accepts a single --source per invocation (chunk size 1),
+	// so 3 targets must produce 3 invocations, each with exactly one --source.
+	invocations := readInvocations(t, logPath)
+	if len(invocations) != 3 {
+		t.Fatalf("expected 3 invocations, got %d: %#v", len(invocations), invocations)
+	}
+	for i, inv := range invocations {
+		if got := strings.Count(inv, "--source="); got != 1 {
+			t.Errorf("invocation %d: expected 1 --source arg, got %d: %q", i, got, inv)
+		}
+	}
+
+	// Results must be identical to the old per-target loop (normalized to
+	// project-relative paths).
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	for _, r := range results {
+		if r.File != "src/config.ts" {
+			t.Errorf("expected normalized relative path src/config.ts, got %q", r.File)
+		}
+	}
+}
+
+func TestRunGitleaksTargets_Chunking(t *testing.T) {
+	projectDir := t.TempDir()
+	binPath, logPath := gitleaksStubBin(t, projectDir)
+
+	targets := make([]string, 200)
+	for i := range targets {
+		targets[i] = filepath.Join(projectDir, "src", "f"+string(rune('a'+i%26))+".ts")
+	}
+
+	results, err := runGitleaksTargets(context.Background(), binPath, projectDir, targets)
+	if err != nil {
+		t.Fatalf("runGitleaksTargets() error = %v", err)
+	}
+
+	// With chunk size 1, 200 targets => 200 invocations, one --source each.
+	invocations := readInvocations(t, logPath)
+	if len(invocations) != 200 {
+		t.Fatalf("expected 200 invocations, got %d", len(invocations))
+	}
+	for i, inv := range invocations {
+		if got := strings.Count(inv, "--source="); got != 1 {
+			t.Errorf("invocation %d: expected 1 --source arg, got %d", i, got)
+		}
+	}
+	if len(results) != 200 {
+		t.Fatalf("expected 200 results, got %d", len(results))
 	}
 }

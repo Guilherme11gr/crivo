@@ -38,6 +38,8 @@ type CompiledRule struct {
 	Type           RuleType
 	PatternRe      *regexp.Regexp // ban-pattern, enforce-pattern
 	WhenPatternRe  *regexp.Regexp // require-import
+	ImportRes      []*regexp.Regexp // ban-import: one pair (ES import, require) per banned package
+	MustImportRe   *regexp.Regexp // require-import: regex for the required import
 	AllowInGlobs   []string
 	Severity       domain.Severity
 	IgnoreComments bool     // skip comment lines in ban-pattern/ban-import
@@ -123,6 +125,16 @@ func CompileRules(rules []config.CustomRule) ([]CompiledRule, []error) {
 				errs = append(errs, fmt.Errorf("rule %s: ban-import requires 'packages'", label))
 				continue
 			}
+			// Pre-compile one pair of regexes (ES import, require) per banned
+			// package so matching never recompiles them per file.
+			cr.ImportRes = make([]*regexp.Regexp, 0, len(raw.Packages)*2)
+			for _, pkg := range raw.Packages {
+				escaped := regexp.QuoteMeta(pkg)
+				cr.ImportRes = append(cr.ImportRes,
+					regexp.MustCompile(`(?:import\s+.*from\s+|import\s+)['"]`+escaped+`(?:/[^'"]*)?['"]`),
+					regexp.MustCompile(`require\s*\(\s*['"]`+escaped+`(?:/[^'"]*)?['"]\s*\)`),
+				)
+			}
 
 		case RuleTypeBanPattern:
 			if raw.Pattern == "" {
@@ -149,6 +161,9 @@ func CompileRules(rules []config.CustomRule) ([]CompiledRule, []error) {
 				}
 				cr.WhenPatternRe = re
 			}
+			// Pre-compile the required-import regex once per rule.
+			escaped := regexp.QuoteMeta(raw.MustImportFrom)
+			cr.MustImportRe = regexp.MustCompile(`(?:import\s+.*from\s+|import\s+|require\s*\(\s*)['"]` + escaped + `(?:/[^'"]*)?['"]`)
 
 		case RuleTypeEnforcePattern:
 			if raw.Pattern == "" {

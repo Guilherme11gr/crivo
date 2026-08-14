@@ -2,6 +2,7 @@ package customrules
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -171,11 +172,12 @@ func TestMatchGlob(t *testing.T) {
 // ─── Ban Import Matcher ─────────────────────────────────────────────────────
 
 func TestMatchBanImport(t *testing.T) {
-	rule := CompiledRule{
-		Raw:      config.CustomRule{ID: "no-moment", Packages: []string{"moment", "dayjs"}, Message: "banned"},
-		Type:     RuleTypeBanImport,
-		Severity: domain.SeverityBlocker,
-	}
+	rule := compileRule(t, config.CustomRule{
+		ID:       "no-moment",
+		Type:     "ban-import",
+		Packages: []string{"moment", "dayjs"},
+		Message:  "banned",
+	})
 
 	tests := []struct {
 		name    string
@@ -290,12 +292,13 @@ func TestMatchBanPattern_IgnoreCommentsDisabled(t *testing.T) {
 }
 
 func TestMatchBanImport_IgnoreComments(t *testing.T) {
-	rule := CompiledRule{
-		Raw:            config.CustomRule{ID: "no-moment", Packages: []string{"moment"}, Message: "banned"},
-		Type:           RuleTypeBanImport,
-		Severity:       domain.SeverityBlocker,
-		IgnoreComments: true,
-	}
+	rule := compileRule(t, config.CustomRule{
+		ID:            "no-moment",
+		Type:          "ban-import",
+		Packages:      []string{"moment"},
+		Message:       "banned",
+		IgnoreComments: boolPtr(true),
+	})
 
 	lines := []string{
 		"// import moment from 'moment'",
@@ -341,12 +344,13 @@ func TestIsCommentLine(t *testing.T) {
 // ─── Require Import Matcher ─────────────────────────────────────────────────
 
 func TestMatchRequireImport(t *testing.T) {
-	rule := CompiledRule{
-		Raw:           config.CustomRule{ID: "dates-from-utils", MustImportFrom: "@/shared/utils/date-utils", Message: "Import from date-utils"},
-		Type:          RuleTypeRequireImport,
-		WhenPatternRe: mustCompile(`(formatDate|parseUTCString|createLocalDate)`),
-		Severity:      domain.SeverityMajor,
-	}
+	rule := compileRule(t, config.CustomRule{
+		ID:             "dates-from-utils",
+		Type:           "require-import",
+		MustImportFrom: "@/shared/utils/date-utils",
+		Message:        "Import from date-utils",
+		WhenPattern:    `(formatDate|parseUTCString|createLocalDate)`,
+	})
 
 	t.Run("has pattern and import", func(t *testing.T) {
 		content := `import { formatDate } from '@/shared/utils/date-utils'
@@ -658,13 +662,12 @@ func TestCompileRules_IgnoreTestsExplicitFalse(t *testing.T) {
 }
 
 func TestMatchBanImport_IgnoreTestsSkipsTestFile(t *testing.T) {
-	rule := CompiledRule{
-		Raw:          config.CustomRule{ID: "no-moment", Packages: []string{"moment"}, Message: "banned"},
-		Type:         RuleTypeBanImport,
-		Severity:     domain.SeverityBlocker,
-		IgnoreTests:  true,
-		AllowInGlobs: []string{"**/*.test.ts", "**/*.spec.ts"},
-	}
+	rule := compileRule(t, config.CustomRule{
+		ID:       "no-moment",
+		Type:     "ban-import",
+		Packages: []string{"moment"},
+		Message:  "banned",
+	})
 
 	lines := []string{"import moment from 'moment'"}
 	// Test file should be skipped
@@ -682,12 +685,13 @@ func TestMatchBanImport_IgnoreTestsSkipsTestFile(t *testing.T) {
 // ─── Allow Subpaths ─────────────────────────────────────────────────────────
 
 func TestMatchBanImport_AllowSubpaths(t *testing.T) {
-	rule := CompiledRule{
-		Raw:           config.CustomRule{ID: "no-date-fns", Packages: []string{"date-fns"}, Message: "banned"},
-		Type:          RuleTypeBanImport,
-		Severity:      domain.SeverityBlocker,
+	rule := compileRule(t, config.CustomRule{
+		ID:            "no-date-fns",
+		Type:          "ban-import",
+		Packages:      []string{"date-fns"},
+		Message:       "banned",
 		AllowSubpaths: []string{"locale"},
-	}
+	})
 
 	tests := []struct {
 		name    string
@@ -1192,12 +1196,58 @@ func TestBuildSemgrepBatchConfig_MixedSimpleAndAdvanced(t *testing.T) {
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
+// BenchmarkMatchBanImport measures the cost of matching a ban-import rule
+// against a 200-line fixture with 4 banned packages. Before the regex
+// precompilation (plan 004), each call recompiled 2 regexes per package
+// (8 MustCompile per file); after, the regexes are compiled once per rule.
+func BenchmarkMatchBanImport(b *testing.B) {
+	rule := compileRule(b, config.CustomRule{
+		ID:       "no-banned",
+		Type:     "ban-import",
+		Packages: []string{"moment", "dayjs", "lodash", "axios"},
+		Message:  "banned",
+	})
+
+	lines := make([]string, 0, 200)
+	for i := 0; i < 200; i++ {
+		lines = append(lines, fmt.Sprintf("import { helper%d } from 'react'", i))
+	}
+	// A few real violations so the matcher does real work
+	lines[10] = "import moment from 'moment'"
+	lines[50] = "const m = require('dayjs')"
+	lines[100] = "import { get } from 'lodash'"
+	lines[150] = "import axios from 'axios'"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		issues := matchBanImport(rule, "src/app.ts", lines)
+		if len(issues) != 4 {
+			b.Fatalf("expected 4 issues, got %d", len(issues))
+		}
+	}
+}
+
 func writeFile(t *testing.T, dir, name, content string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 }
+
+// compileRule compiles a single raw rule via CompileRules, failing the test on
+// any compile error. Fixtures must go through CompileRules so the pre-compiled
+// regex fields (ImportRes, MustImportRe) are populated.
+func compileRule(tb testing.TB, raw config.CustomRule) CompiledRule {
+	tb.Helper()
+	compiled, errs := CompileRules([]config.CustomRule{raw})
+	if len(errs) > 0 {
+		tb.Fatalf("compileRule(%q): unexpected errors: %v", raw.ID, errs)
+	}
+	return compiled[0]
+}
+
+func boolPtr(v bool) *bool { return &v }
 
 func mustCompile(pattern string) *regexp.Regexp {
 	return regexp.MustCompile(pattern)

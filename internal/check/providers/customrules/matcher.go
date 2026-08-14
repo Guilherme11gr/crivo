@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/guilherme11gr/crivo/internal/check"
@@ -55,15 +54,10 @@ func matchBanImport(rule CompiledRule, filePath string, lines []string) []domain
 
 	var issues []domain.Issue
 
-	for _, pkg := range rule.Raw.Packages {
-		// Match: import ... from 'pkg' or import ... from 'pkg/sub'
-		// Match: require('pkg') or require('pkg/sub')
-		// Word boundary: don't match 'safe-pkg' when banning 'pkg'
-		escaped := regexp.QuoteMeta(pkg)
-		patterns := []*regexp.Regexp{
-			regexp.MustCompile(`(?:import\s+.*from\s+|import\s+)['"]` + escaped + `(?:/[^'"]*)?['"]`),
-			regexp.MustCompile(`require\s*\(\s*['"]` + escaped + `(?:/[^'"]*)?['"]\s*\)`),
-		}
+	for i, pkg := range rule.Raw.Packages {
+		// Regexes are pre-compiled at rule compile time (CompileRules):
+		// one pair (ES import, require) per banned package.
+		patterns := rule.ImportRes[i*2 : i*2+2]
 
 		for lineNum, line := range lines {
 			if rule.IgnoreComments && isCommentLine(line) {
@@ -141,11 +135,8 @@ func matchRequireImport(rule CompiledRule, filePath string, content string) []do
 		}
 	}
 
-	// Check if the required import exists
-	escaped := regexp.QuoteMeta(rule.Raw.MustImportFrom)
-	importRe := regexp.MustCompile(`(?:import\s+.*from\s+|import\s+|require\s*\(\s*)['"]` + escaped + `(?:/[^'"]*)?['"]`)
-
-	if importRe.MatchString(content) {
+	// Check if the required import exists (regex pre-compiled at rule compile time)
+	if rule.MustImportRe.MatchString(content) {
 		return nil // import found, all good
 	}
 
