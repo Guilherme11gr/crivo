@@ -14,6 +14,9 @@ import (
 // tests cannot catch semantic mismatches (namespaced check_ids, language
 // detection on extensionless files) — only the real binary can.
 func TestEmbeddedPackFixturesCompileWithRealSemgrep(t *testing.T) {
+	// Earlier tests in this process may have cached a stub semgrep: reset so
+	// FindTool resolves the real binary (or nothing).
+	check.ResetToolCacheForTests()
 	if check.FindTool("semgrep") == "" {
 		t.Skip("semgrep not available: fixture semantics need the real binary")
 	}

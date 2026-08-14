@@ -11,9 +11,23 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
+
+// forceSemgrepUnavailable makes every lookup path miss: PATH stripped, HOME
+// redirected (so ~/.qualitygate/bin and the venv are not found), auto-install
+// disabled, and the process-wide tool cache cleared. Tests that assert the
+// "semgrep absent" behavior MUST use this — a machine with semgrep installed
+// (or an earlier stub test in the same process) would otherwise leak in.
+func forceSemgrepUnavailable(t *testing.T) {
+	t.Helper()
+	check.ResetToolCacheForTests()
+	t.Setenv("PATH", "/nonexistent-bin")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+}
 
 // ─── Embedded pack (plan 008 spike) ─────────────────────────────────────────
 
@@ -26,8 +40,7 @@ func TestProvider_Analyze_EmbeddedPackCompiles(t *testing.T) {
 include:
   - "pack:security-ts"
 `)
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	cfg, _, err := config.Load(dir)
 	if err != nil {
@@ -64,8 +77,7 @@ custom-rules:
     pattern: "eval\\("
     message: "No eval"
 `)
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	cfg, _, err := config.Load(dir)
 	if err != nil {
@@ -275,8 +287,7 @@ func TestCompileRules_FixtureSemgrepWithoutBinaryWarns(t *testing.T) {
 	// semgrep is not installed in this environment: fixtures must NOT fail
 	// compilation — they are collected as a warning (plan 008, coherent with
 	// plan 002's runtime skip).
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	rules := []config.CustomRule{
 		{
@@ -364,8 +375,7 @@ func TestProvider_Analyze_FixtureWarningSurfaced(t *testing.T) {
 	os.MkdirAll(srcDir, 0755)
 	writeFile(t, srcDir, "app.ts", "const x = 1\n")
 
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	cfg := config.DefaultConfig()
 	cfg.CustomRules = []config.CustomRule{
@@ -1485,8 +1495,7 @@ func TestBuildSemgrepBatchConfig_AllOptions(t *testing.T) {
 func TestMatchSemgrepBatch_NotInstalled(t *testing.T) {
 	// Force semgrep unavailable: strip it from PATH and disable auto-install so
 	// the test never attempts a real pip install.
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	rules := []CompiledRule{
 		{
@@ -1651,8 +1660,7 @@ func TestProvider_Analyze_SemgrepUnavailableWarns(t *testing.T) {
 
 	// Strip semgrep from PATH and disable auto-install so this never attempts
 	// a real pip install.
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	cfg := config.DefaultConfig()
 	cfg.CustomRules = []config.CustomRule{
@@ -1707,6 +1715,9 @@ var (
 
 func semgrepStubBin(t *testing.T) {
 	t.Helper()
+	// A previous test in this process may have cached the real semgrep
+	// (machines with it installed): clear so the stub on PATH wins.
+	check.ResetToolCacheForTests()
 	semgrepStubOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "crivo-customrules-semgrep-stub-*")
 		if err != nil {
