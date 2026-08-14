@@ -32,7 +32,10 @@ import (
 	"github.com/guilherme11gr/crivo/internal/tui"
 )
 
-var version = "3.4.2"
+// version is the crivo release identifier. Local builds default to "dev";
+// release builds inject the real version via
+// `-ldflags "-X main.version=<version>"` (see Makefile and .goreleaser.yaml).
+var version = "dev"
 
 const helpText = `
   crivo — Local quality gate for agent coding workflows and CI
@@ -147,6 +150,8 @@ func parseArgs(args []string) options {
 			}
 		case "--help", "-h":
 			opts.command = "help"
+		case "--version", "-V":
+			opts.command = "version"
 		default:
 			if len(arg) > 0 && arg[0] == '-' {
 				fmt.Fprintf(os.Stderr, "Unknown option: %s\n", arg)
