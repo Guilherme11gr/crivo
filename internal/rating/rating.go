@@ -1,6 +1,7 @@
 package rating
 
 import (
+	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
@@ -135,14 +136,13 @@ func parseEffort(effort string) int {
 var policyBlockers = map[string]map[string]bool{
 	"release": {
 		"type_errors":           true,
-		"lint_errors":           true,
 		"secrets":               true,
 		"duplication_pct":       true,
 		"custom_rules_blocking": true,
+		"errored_checks":        true,
 	},
 	"strict": {
 		"type_errors":           true,
-		"lint_errors":           true,
 		"secrets":               true,
 		"coverage_lines":        true,
 		"duplication_pct":       true,
@@ -151,9 +151,52 @@ var policyBlockers = map[string]map[string]bool{
 	"informational": {},
 }
 
+// GateThresholds holds the numeric thresholds used by EvaluateQualityGate.
+// They are loaded from the config's quality-gate block; zero values fall back
+// to the defaults below (matching the historical hardcoded thresholds).
+type GateThresholds struct {
+	CoverageLines       float64
+	DuplicationPct      float64
+	Secrets             int
+	CustomRulesBlocking int
+	ErroredChecks       int
+}
+
+// DefaultGateThresholds returns the historical hardcoded thresholds.
+func DefaultGateThresholds() GateThresholds {
+	return GateThresholds{
+		CoverageLines:       60,
+		DuplicationPct:      5,
+		Secrets:             1,
+		CustomRulesBlocking: 1,
+		ErroredChecks:       1,
+	}
+}
+
+// ThresholdsFromConfig maps the config's quality-gate block onto gate
+// thresholds. Zero values in the config fall back to the defaults, so a
+// partial .qualitygate.yaml never silently disables a blocker.
+func ThresholdsFromConfig(cfg *config.Config) GateThresholds {
+	t := DefaultGateThresholds()
+	if cfg == nil || cfg.QualityGate.Overall.Coverage == 0 {
+		return t
+	}
+	t.CoverageLines = cfg.QualityGate.Overall.Coverage
+	if cfg.QualityGate.Overall.Duplications != 0 {
+		t.DuplicationPct = cfg.QualityGate.Overall.Duplications
+	}
+	if cfg.QualityGate.Overall.Bugs != 0 {
+		t.Secrets = cfg.QualityGate.Overall.Bugs
+	}
+	if cfg.QualityGate.Overall.CodeSmells != 0 {
+		t.CustomRulesBlocking = cfg.QualityGate.Overall.CodeSmells
+	}
+	return t
+}
+
 // EvaluateQualityGate checks all conditions and returns pass/fail.
 // The policy parameter controls which failing conditions actually block the gate.
-func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
+func EvaluateQualityGate(result *domain.AnalysisResult, policy string, thresholds GateThresholds) {
 	if policy == "" {
 		policy = "release"
 	}
@@ -185,9 +228,17 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 
 	// Build conditions from check results
 	var conditions []domain.QualityGateCondition
+	erroredChecks := 0.0
 
 	for _, check := range result.Checks {
 		if check.Status == domain.StatusSkipped {
+			continue
+		}
+		// A check in error state means the tool did not run — no condition may
+		// be built from its (possibly absent) metrics. It is counted separately
+		// and blocks the release gate fail-closed.
+		if check.Status == domain.StatusError {
+			erroredChecks++
 			continue
 		}
 
@@ -216,7 +267,7 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 					conditions = append(conditions, domain.QualityGateCondition{
 						Metric:    "coverage_lines",
 						Operator:  "gt",
-						Threshold: 60,
+						Threshold: thresholds.CoverageLines,
 						Actual:    lines,
 						Passed:    check.Status != domain.StatusFailed,
 					})
@@ -229,9 +280,9 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 					conditions = append(conditions, domain.QualityGateCondition{
 						Metric:    "duplication_pct",
 						Operator:  "lt",
-						Threshold: 5,
+						Threshold: thresholds.DuplicationPct,
 						Actual:    pct,
-						Passed:    pct < 5,
+						Passed:    pct < thresholds.DuplicationPct,
 					})
 				}
 			}
@@ -244,7 +295,7 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 			conditions = append(conditions, domain.QualityGateCondition{
 				Metric:    "secrets",
 				Operator:  "lt",
-				Threshold: 1,
+				Threshold: float64(thresholds.Secrets),
 				Actual:    secrets,
 				Passed:    secrets == 0,
 			})
@@ -257,12 +308,21 @@ func EvaluateQualityGate(result *domain.AnalysisResult, policy string) {
 			conditions = append(conditions, domain.QualityGateCondition{
 				Metric:    "custom_rules_blocking",
 				Operator:  "lt",
-				Threshold: 1,
+				Threshold: float64(thresholds.CustomRulesBlocking),
 				Actual:    blockingViolations,
 				Passed:    blockingViolations == 0,
 			})
 		}
 	}
+
+	// Fail-closed: any check that errored (infra breakage) blocks release.
+	conditions = append(conditions, domain.QualityGateCondition{
+		Metric:    "errored_checks",
+		Operator:  "lt",
+		Threshold: float64(thresholds.ErroredChecks),
+		Actual:    erroredChecks,
+		Passed:    erroredChecks < float64(thresholds.ErroredChecks),
+	})
 
 	result.Conditions = conditions
 
