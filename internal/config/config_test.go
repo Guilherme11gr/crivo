@@ -224,3 +224,67 @@ func TestLoad_MalformedCandidateNotMaskedByValidSibling(t *testing.T) {
 		t.Errorf("error should cite the malformed candidate, got %q", err)
 	}
 }
+
+func TestLoad_CustomRuleTestsParsed(t *testing.T) {
+	dir := t.TempDir()
+	configContent := `
+custom-rules:
+  - id: no-eval
+    type: semgrep
+    pattern: "eval(...)"
+    message: "No eval"
+    tests:
+      - code: "const x = eval(userInput)"
+        match: true
+      - code: "const x = evaluate(userInput)"
+        match: false
+`
+	if err := os.WriteFile(filepath.Join(dir, ".qualitygate.yaml"), []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _, err := Load(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.CustomRules) != 1 {
+		t.Fatalf("expected 1 custom rule, got %d", len(cfg.CustomRules))
+	}
+	rule := cfg.CustomRules[0]
+	if len(rule.Tests) != 2 {
+		t.Fatalf("expected 2 test specs, got %d", len(rule.Tests))
+	}
+	if rule.Tests[0].Code != "const x = eval(userInput)" || !rule.Tests[0].Match {
+		t.Errorf("unexpected first spec: %+v", rule.Tests[0])
+	}
+	if rule.Tests[1].Code != "const x = evaluate(userInput)" || rule.Tests[1].Match {
+		t.Errorf("unexpected second spec: %+v", rule.Tests[1])
+	}
+}
+
+func TestLoad_CustomRuleWithoutTestsStillParses(t *testing.T) {
+	// Retrocompat: YAML written before the tests field existed must load
+	// unchanged — the field is additive.
+	dir := t.TempDir()
+	configContent := `
+custom-rules:
+  - id: no-moment
+    type: ban-import
+    packages: ["moment"]
+    message: "Use date-fns"
+`
+	if err := os.WriteFile(filepath.Join(dir, ".qualitygate.yaml"), []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _, err := Load(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.CustomRules) != 1 {
+		t.Fatalf("expected 1 custom rule, got %d", len(cfg.CustomRules))
+	}
+	if len(cfg.CustomRules[0].Tests) != 0 {
+		t.Errorf("expected no test specs, got %d", len(cfg.CustomRules[0].Tests))
+	}
+}

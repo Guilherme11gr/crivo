@@ -415,6 +415,57 @@ func buildSemgrepBatchConfig(rules []CompiledRule) (string, error) {
 	return tmpFile.Name(), nil
 }
 
+// validateSemgrepFixture runs one semgrep rule against a single fixture file and
+// reports whether the rule fired. It returns (fired, validated): validated=false
+// when the binary is unavailable (mirrors the runtime skip, plan 002) or the
+// subprocess failed — the caller must surface that as a warning, never an error.
+func validateSemgrepFixture(rule CompiledRule, code string) (bool, bool) {
+	if !isSemgrepAvailable() {
+		return false, false
+	}
+
+	tmpFile, err := os.CreateTemp("", "crivo-semgrep-fixture-*")
+	if err != nil {
+		return false, false
+	}
+	path := tmpFile.Name()
+	defer os.Remove(path)
+	if _, err := tmpFile.WriteString(code); err != nil {
+		tmpFile.Close()
+		return false, false
+	}
+	tmpFile.Close()
+
+	configPath, err := buildSemgrepBatchConfig([]CompiledRule{rule})
+	if err != nil {
+		return false, false
+	}
+	defer os.Remove(configPath)
+
+	cmd := exec.Command(findSemgrepBin(), "scan", "--json", "--quiet", "--config", configPath, path)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	output := stdout.Bytes()
+	if runErr != nil && len(output) == 0 {
+		return false, false
+	}
+
+	var result semgrepJSON
+	if err := json.Unmarshal(output, &result); err != nil {
+		return false, false
+	}
+
+	for _, r := range result.Results {
+		if r.CheckID == rule.Raw.ID {
+			return true, true
+		}
+	}
+	return false, true
+}
+
 // matchSemgrepBatch runs semgrep once with multiple rules batched into a single config file.
 // Rules are grouped by their file glob, and one semgrep invocation is made per glob group.
 // Results are mapped back to the correct rule by check_id.

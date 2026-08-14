@@ -35,6 +35,10 @@ type Config struct {
 	Duplication DuplicationConfig `yaml:"duplication" json:"duplication"`
 	Complexity  ComplexityConfig  `yaml:"complexity" json:"complexity"`
 	CustomRules []CustomRule      `yaml:"custom-rules" json:"customRules"`
+	// Include lists extra custom-rule sources resolved at load time: relative
+	// YAML files (paths resolved against the project dir) and embedded packs
+	// ("pack:<name>"). Rules from includes are appended to custom-rules.
+	Include []string `yaml:"include" json:"include"`
 }
 
 type ChecksConfig struct {
@@ -135,6 +139,19 @@ type CustomRule struct {
 	PatternInside     string            `yaml:"pattern-inside" json:"patternInside"`
 	PatternNotInside  string            `yaml:"pattern-not-inside" json:"patternNotInside"`
 	MetavariableRegex map[string]string `yaml:"metavariable-regex" json:"metavariableRegex"`
+
+	// Tests are per-rule fixtures validated at compile time: each spec runs the
+	// rule against Code as a synthetic file and the matcher result must agree
+	// with Match (true = must match, false = must not). Optional — rules
+	// without tests behave exactly as before.
+	Tests []TestSpec `yaml:"tests" json:"tests"`
+}
+
+// TestSpec is one fixture case for a custom rule. Match=true means the rule
+// must fire on Code; Match=false means it must not.
+type TestSpec struct {
+	Code  string `yaml:"code" json:"code"`
+	Match bool   `yaml:"match" json:"match"`
 }
 
 // DefaultConfig returns sensible defaults

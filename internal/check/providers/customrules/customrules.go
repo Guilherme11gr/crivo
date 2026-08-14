@@ -60,7 +60,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 
 	// Compile rules
-	compiled, compileErrs := CompileRules(cfg.CustomRules)
+	compiled, compileErrs, compileWarnings := CompileRules(cfg.CustomRules)
 	if len(compileErrs) > 0 {
 		msgs := make([]string, len(compileErrs))
 		for i, e := range compileErrs {
@@ -74,7 +74,7 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 
 	var allIssues []domain.Issue
-	var details []string
+	details := append([]string{}, compileWarnings...)
 
 	// Separate rules by execution strategy
 	var fileRules []CompiledRule
