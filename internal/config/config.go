@@ -1,8 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -174,8 +176,14 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load reads config from .qualitygate.yaml in the project dir, merging with defaults
-func Load(projectDir string) (*Config, string) {
+// Load reads config from .qualitygate.yaml in the project dir, merging with defaults.
+//
+// A candidate file that exists but fails to parse is a hard error: silently
+// falling back to defaults would make every custom rule and threshold
+// disappear while the gate reports green. All malformed candidates are
+// collected so a broken .qualitygate.yaml is never masked by a valid
+// .qualitygate.yml.
+func Load(projectDir string) (*Config, string, error) {
 	cfg := DefaultConfig()
 
 	candidates := []string{
@@ -183,6 +191,10 @@ func Load(projectDir string) (*Config, string) {
 		".qualitygate.yml",
 		".qualitygate.json",
 	}
+
+	var parseErrs []string
+	var loaded *Config
+	var loadedPath string
 
 	for _, name := range candidates {
 		configPath := filepath.Join(projectDir, name)
@@ -205,13 +217,27 @@ func Load(projectDir string) (*Config, string) {
 
 		// Then overlay user's explicit values on top
 		if err := yaml.Unmarshal(data, cfg); err != nil {
+			parseErrs = append(parseErrs, fmt.Sprintf("%s: %v", configPath, err))
 			continue
 		}
 
-		return cfg, configPath
+		loaded = cfg
+		loadedPath = configPath
 	}
 
-	return cfg, "defaults"
+	// A candidate file that exists but fails to parse is a hard error — even
+	// when a sibling candidate parses: a broken .qualitygate.yaml must never
+	// be skipped in silence, or rules and thresholds would vanish while the
+	// gate reports green.
+	if len(parseErrs) > 0 {
+		return nil, "", fmt.Errorf("config parse error in %s", strings.Join(parseErrs, "; "))
+	}
+
+	if loaded != nil {
+		return loaded, loadedPath, nil
+	}
+
+	return cfg, "defaults", nil
 }
 
 // GenerateDefault returns the default YAML config as bytes
