@@ -8,26 +8,72 @@ import (
 	"strings"
 )
 
+// defaultNodeHeapMB is the --max-old-space-size injected into NODE_OPTIONS for
+// the node subprocesses crivo spawns (tsc, jest/vitest, jscpd, knip). The Node
+// default heap (~2GB on 64-bit) is too small for typechecking or test-running
+// large projects — on CI runners the subprocess OOMs and, since crivo 3.5,
+// that crash correctly fails the gate instead of passing green. The value is a
+// ceiling, not a preallocation: raising it costs nothing on small projects.
+const defaultNodeHeapMB = "4096"
+
+// withNodeHeap ensures NODE_OPTIONS carries a --max-old-space-size, appending
+// the default when the user hasn't set one (an explicit value is never
+// overridden). Set CRIVO_NODE_HEAP_MB to change the default or to "0" to
+// disable injection entirely.
+func withNodeHeap(env []string) []string {
+	heap := os.Getenv("CRIVO_NODE_HEAP_MB")
+	if heap == "" {
+		heap = defaultNodeHeapMB
+	}
+	if heap == "0" || strings.EqualFold(heap, "off") {
+		return env
+	}
+
+	for i, e := range env {
+		if !strings.HasPrefix(strings.ToUpper(e), "NODE_OPTIONS=") {
+			continue
+		}
+		if strings.Contains(e, "--max-old-space-size") {
+			return env // user manages the heap themselves
+		}
+		existing := strings.TrimSpace(e[len("NODE_OPTIONS="):])
+		if existing == "" {
+			env[i] = "NODE_OPTIONS=--max-old-space-size=" + heap
+		} else {
+			env[i] = existing + " --max-old-space-size=" + heap
+		}
+		return env
+	}
+
+	return append(env, "NODE_OPTIONS=--max-old-space-size="+heap)
+}
+
 // NodeEnv returns a copy of os.Environ() with the node/npx directory
 // prepended to PATH. This ensures child processes (like jscpd calling node)
-// can find node even when it's not in the Go process PATH.
+// can find node even when it's not in the Go process PATH. It also ensures a
+// roomy Node heap via NODE_OPTIONS — see withNodeHeap.
 func NodeEnv() []string {
 	npxBin := FindNpx()
 	if npxBin == "" {
-		return os.Environ()
+		return withNodeHeap(os.Environ())
 	}
 
 	nodeDir := filepath.Dir(npxBin)
 	env := os.Environ()
 
+	pathFound := false
 	for i, e := range env {
 		if strings.HasPrefix(strings.ToUpper(e), "PATH=") {
 			env[i] = "PATH=" + nodeDir + string(os.PathListSeparator) + e[5:]
-			return env
+			pathFound = true
+			break
 		}
 	}
+	if !pathFound {
+		env = append(env, "PATH="+nodeDir)
+	}
 
-	return append(env, "PATH="+nodeDir)
+	return withNodeHeap(env)
 }
 
 // FindNpx locates the npx binary, checking PATH and common install locations.
