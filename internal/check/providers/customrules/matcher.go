@@ -339,144 +339,6 @@ func hasAdvancedSemgrepOptions(raw config.CustomRule) bool {
 		raw.PatternNotInside != "" || len(raw.MetavariableRegex) > 0
 }
 
-// buildSemgrepConfigFile generates a temporary semgrep YAML rule config for complex patterns.
-// Returns the path to the temp file (caller must clean up) or an error.
-func buildSemgrepConfigFile(rule CompiledRule) (string, error) {
-	// Build the patterns list for semgrep YAML
-	var patterns []map[string]any
-	patterns = append(patterns, map[string]any{"pattern": rule.Raw.Pattern})
-
-	if rule.Raw.PatternNot != "" {
-		patterns = append(patterns, map[string]any{"pattern-not": rule.Raw.PatternNot})
-	}
-	if rule.Raw.PatternInside != "" {
-		patterns = append(patterns, map[string]any{"pattern-inside": rule.Raw.PatternInside})
-	}
-	if rule.Raw.PatternNotInside != "" {
-		patterns = append(patterns, map[string]any{"pattern-not-inside": rule.Raw.PatternNotInside})
-	}
-	for varName, regex := range rule.Raw.MetavariableRegex {
-		patterns = append(patterns, map[string]any{
-			"metavariable-regex": map[string]string{
-				"metavariable": varName,
-				"regex":        regex,
-			},
-		})
-	}
-
-	ruleConfig := map[string]any{
-		"rules": []map[string]any{
-			{
-				"id":        rule.Raw.ID,
-				"patterns":  patterns,
-				"message":   rule.Raw.Message,
-				"languages": []string{rule.Language},
-				"severity":  "WARNING",
-			},
-		},
-	}
-
-	data, err := yaml.Marshal(ruleConfig)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal semgrep config: %w", err)
-	}
-
-	tmpFile, err := os.CreateTemp("", "crivo-semgrep-*.yaml")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temp file: %w", err)
-	}
-
-	if _, err := tmpFile.Write(data); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpFile.Name())
-		return "", fmt.Errorf("failed to write semgrep config: %w", err)
-	}
-	tmpFile.Close()
-
-	return tmpFile.Name(), nil
-}
-
-// matchSemgrep runs semgrep with the rule's pattern against files and returns issues.
-// For simple patterns, uses --pattern flag. For complex rules (pattern-not, pattern-inside, etc.),
-// generates a temp YAML config file and uses --config.
-func matchSemgrep(ctx context.Context, rule CompiledRule, projectDir string, files []string) []domain.Issue {
-	if !isSemgrepAvailable() {
-		return nil
-	}
-
-	args := []string{
-		"scan",
-		"--json",
-		"--quiet",
-	}
-
-	// Complex rules need a config file; simple rules use --pattern
-	if hasAdvancedSemgrepOptions(rule.Raw) {
-		configPath, err := buildSemgrepConfigFile(rule)
-		if err != nil {
-			return nil
-		}
-		defer os.Remove(configPath)
-		args = append(args, "--config", configPath)
-	} else {
-		args = append(args, "--pattern", rule.Raw.Pattern, "--lang", rule.Language)
-	}
-
-	// Add file targets
-	for _, f := range files {
-		args = append(args, filepath.Join(projectDir, f))
-	}
-
-	cmd := exec.CommandContext(ctx, findSemgrepBin(), args...)
-	cmd.Dir = projectDir
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	_ = cmd.Run()
-
-	output := stdout.Bytes()
-	if len(output) == 0 {
-		return nil
-	}
-
-	var result semgrepJSON
-	if err := json.Unmarshal(output, &result); err != nil {
-		return nil
-	}
-
-	var issues []domain.Issue
-	for _, r := range result.Results {
-		relPath := r.Path
-		if rel, err := filepath.Rel(projectDir, r.Path); err == nil {
-			relPath = rel
-		}
-		relPath = filepath.ToSlash(relPath)
-
-		// Check allow-in
-		if len(rule.AllowInGlobs) > 0 && IsAllowedIn(relPath, rule.AllowInGlobs) {
-			continue
-		}
-
-		issues = append(issues, domain.Issue{
-			RuleID:      rule.Raw.ID,
-			Message:     rule.Raw.Message,
-			File:        relPath,
-			Line:        r.Start.Line,
-			Column:      r.Start.Col,
-			Severity:    rule.Severity,
-			Type:        domain.IssueTypeCodeSmell,
-			Advisory:    rule.Advisory,
-			Source:      "custom-rules",
-			Effort:      "15min",
-			Remediation: domain.CustomRuleRemediation("semgrep", rule.Raw.Message),
-		})
-	}
-
-	return issues
-}
-
 // buildSemgrepBatchConfig generates a temporary semgrep YAML config file containing multiple rules.
 // Returns the path to the temp file (caller must clean up) or an error.
 func buildSemgrepBatchConfig(rules []CompiledRule) (string, error) {
@@ -665,6 +527,14 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 				continue
 			}
 
+			// Derive the remediation from the rule mode: advisory rules get the
+			// advisory remediation, blocking rules the semgrep one. The two
+			// paths (single-rule vs batch) must never diverge here.
+			remediationType := "semgrep"
+			if rule.Advisory {
+				remediationType = "advisory"
+			}
+
 			allIssues = append(allIssues, domain.Issue{
 				RuleID:      rule.Raw.ID,
 				Message:     rule.Raw.Message,
@@ -676,7 +546,7 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 				Advisory:    rule.Advisory,
 				Source:      "custom-rules",
 				Effort:      "15min",
-				Remediation: domain.CustomRuleRemediation("semgrep", rule.Raw.Message),
+				Remediation: domain.CustomRuleRemediation(remediationType, rule.Raw.Message),
 			})
 		}
 	}
