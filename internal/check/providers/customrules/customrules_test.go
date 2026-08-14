@@ -1835,6 +1835,33 @@ func TestMatchSemgrepBatch_StubAllowInFiltersFinding(t *testing.T) {
 	}
 }
 
+func TestCompileRules_FixtureSemgrepValidatedWithBinary(t *testing.T) {
+	// With the semgrep binary available, semgrep fixtures are validated for
+	// real: a fixture that disagrees with the scan result is a compile error.
+	// The stub reports a finding for check_id "no-eval" on any input.
+	semgrepStubBin(t)
+
+	rules := []config.CustomRule{
+		{
+			ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "No eval",
+			Tests: []config.TestSpec{
+				{Code: "const x = eval(userInput)", Match: true},  // stub finds it → ok
+				{Code: "const x = evaluate(userInput)", Match: false}, // stub finds it → error
+			},
+		},
+	}
+	_, errs, warnings := CompileRules(rules)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 fixture error (stub always matches), got %d: %v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Error(), "no-eval") || !strings.Contains(errs[0].Error(), "fixture 2") {
+		t.Errorf("error should cite rule and fixture case, got %q", errs[0].Error())
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings when the binary is available, got %#v", warnings)
+	}
+}
+
 func TestMatchSemgrepBatch_StubSubprocessError(t *testing.T) {
 	projectDir := t.TempDir()
 	srcDir := filepath.Join(projectDir, "src")
