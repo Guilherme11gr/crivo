@@ -110,22 +110,49 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}, nil
 	}
 
-	// Build command based on detected test runner
+	// In --new-code mode the whole-repo suite is the most expensive check in
+	// the pipeline while the gate only cares about changed lines. The
+	// coverage.new-code config decides what to do: skip entirely (default),
+	// run only related tests, or run the full suite.
 	var args []string
-	switch runner {
-	case "vitest":
-		args = []string{"vitest", "run",
-			"--coverage",
-			"--coverage.reporter=json-summary",
-			"--passWithNoTests",
+	if scope, ok := check.NewCodeScopeFromContext(ctx); ok {
+		switch config.CoverageNewCodeMode(cfg.Coverage.NewCode) {
+		case config.CoverageNewCodeOff:
+			return &domain.CheckResult{
+				Name:     p.Name(),
+				ID:       p.ID(),
+				Status:   domain.StatusSkipped,
+				Summary:  "coverage skipped in new-code mode (set coverage.new-code: related|full to enable)",
+				Duration: time.Since(start),
+			}, nil
+		case config.CoverageNewCodeRelated:
+			files := newCodeSourceFiles(scope)
+			if len(files) == 0 {
+				return &domain.CheckResult{
+					Name:     p.Name(),
+					ID:       p.ID(),
+					Status:   domain.StatusSkipped,
+					Summary:  "coverage skipped in new-code mode (no source files changed)",
+					Duration: time.Since(start),
+				}, nil
+			}
+			args = relatedTestArgs(runner, files)
+		case config.CoverageNewCodeFull:
+			// Unchanged: full suite below.
+			args = fullSuiteArgs(runner)
+		default:
+			// Unreachable: config.Load validates the enum. Fall back to the
+			// safe default (skip) rather than paying for the whole suite.
+			return &domain.CheckResult{
+				Name:     p.Name(),
+				ID:       p.ID(),
+				Status:   domain.StatusSkipped,
+				Summary:  "coverage skipped in new-code mode (set coverage.new-code: related|full to enable)",
+				Duration: time.Since(start),
+			}, nil
 		}
-	default: // jest
-		args = []string{"jest",
-			"--coverage",
-			"--coverageReporters=json-summary",
-			"--passWithNoTests",
-			"--silent",
-		}
+	} else {
+		args = fullSuiteArgs(runner)
 	}
 
 	cmd := exec.CommandContext(ctx, npxBin, args...)
@@ -336,5 +363,67 @@ func testRunnerMetric(runner string) float64 {
 		return 2
 	default:
 		return 0
+	}
+}
+
+// fullSuiteArgs builds the coverage command for the whole test suite.
+func fullSuiteArgs(runner string) []string {
+	switch runner {
+	case "vitest":
+		return []string{"vitest", "run",
+			"--coverage",
+			"--coverage.reporter=json-summary",
+			"--passWithNoTests",
+		}
+	default: // jest
+		return []string{"jest",
+			"--coverage",
+			"--coverageReporters=json-summary",
+			"--passWithNoTests",
+			"--silent",
+		}
+	}
+}
+
+// newCodeSourceFiles returns the changed files that could be coverage sources
+// (TS/TSX/JS/JSX). Non-source changes (configs, styles, docs, lockfiles) cannot
+// be covered, so a scope with none of them has nothing to run related tests
+// against.
+func newCodeSourceFiles(scope check.NewCodeScope) []string {
+	var files []string
+	for _, f := range scope.ChangedFiles {
+		ext := strings.ToLower(filepath.Ext(f))
+		switch ext {
+		case ".ts", ".tsx", ".js", ".jsx":
+			files = append(files, f)
+		}
+	}
+	sort.Strings(files)
+	return files
+}
+
+// relatedTestArgs builds the runner command restricted to tests touching the
+// given source files. Flag names are the documented vitest/jest ones:
+//
+//   - vitest: `vitest related --coverage <files>` (vitest related runs the
+//     tests that import the given modules; --coverage is forwarded to vitest)
+//   - jest:   `jest --findRelatedTests <files> --coverage ...`
+//
+// Real-runner validation against a fixture repo is a follow-up caveat (see
+// plan 005); the flags follow the documented CLI surface.
+func relatedTestArgs(runner string, files []string) []string {
+	switch runner {
+	case "vitest":
+		args := []string{"vitest", "related", "--coverage"}
+		return append(args, files...)
+	default: // jest
+		args := []string{"jest", "--findRelatedTests"}
+		args = append(args, files...)
+		return append(args,
+			"--coverage",
+			"--coverageReporters=json-summary",
+			"--passWithNoTests",
+			"--silent",
+		)
 	}
 }

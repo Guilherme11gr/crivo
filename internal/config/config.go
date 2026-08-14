@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -67,11 +68,30 @@ type ThresholdConfig struct {
 	CodeSmells      int     `yaml:"code-smells" json:"codeSmells"`
 }
 
+// CoverageNewCodeMode controls how the coverage check behaves in --new-code mode.
+//   - "off": skip the coverage suite entirely (default) — the most expensive
+//     check in the pipeline is skipped in PR mode because the suite covers the
+//     whole repo while the gate only cares about changed lines.
+//   - "related": run only the tests related to changed files.
+//   - "full": run the whole suite (pre-new-code behavior).
+type CoverageNewCodeMode string
+
+const (
+	CoverageNewCodeOff     CoverageNewCodeMode = "off"
+	CoverageNewCodeRelated CoverageNewCodeMode = "related"
+	CoverageNewCodeFull    CoverageNewCodeMode = "full"
+)
+
 type CoverageConfig struct {
 	Lines      float64 `yaml:"lines" json:"lines"`
 	Branches   float64 `yaml:"branches" json:"branches"`
 	Functions  float64 `yaml:"functions" json:"functions"`
 	Statements float64 `yaml:"statements" json:"statements"`
+
+	// NewCode selects the coverage strategy in --new-code mode: "off" (default,
+	// skip the suite), "related" (only tests touching changed files) or "full"
+	// (whole suite).
+	NewCode string `yaml:"new-code" json:"newCode"`
 }
 
 type DuplicationConfig struct {
@@ -159,6 +179,7 @@ func DefaultConfig() *Config {
 			Branches:   50,
 			Functions:  60,
 			Statements: 60,
+			NewCode:    string(CoverageNewCodeOff),
 		},
 		Duplication: DuplicationConfig{
 			Threshold:           5,
@@ -174,8 +195,10 @@ func DefaultConfig() *Config {
 	}
 }
 
-// Load reads config from .qualitygate.yaml in the project dir, merging with defaults
-func Load(projectDir string) (*Config, string) {
+// Load reads config from .qualitygate.yaml in the project dir, merging with defaults.
+// The third return value is non-empty when the loaded config is invalid (e.g. an
+// unknown coverage.new-code mode) — invalid values are errors, never silent.
+func Load(projectDir string) (*Config, string, string) {
 	cfg := DefaultConfig()
 
 	candidates := []string{
@@ -208,10 +231,20 @@ func Load(projectDir string) (*Config, string) {
 			continue
 		}
 
-		return cfg, configPath
+		return cfg, configPath, validateCoverageNewCode(cfg.Coverage.NewCode)
 	}
 
-	return cfg, "defaults"
+	return cfg, "defaults", validateCoverageNewCode(cfg.Coverage.NewCode)
+}
+
+// validateCoverageNewCode rejects unknown coverage.new-code modes.
+func validateCoverageNewCode(mode string) string {
+	switch CoverageNewCodeMode(mode) {
+	case CoverageNewCodeOff, CoverageNewCodeRelated, CoverageNewCodeFull:
+		return ""
+	default:
+		return fmt.Sprintf("invalid coverage.new-code value %q (want off|related|full)", mode)
+	}
 }
 
 // GenerateDefault returns the default YAML config as bytes

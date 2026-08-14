@@ -26,7 +26,7 @@ func (p *Provider) ID() string   { return "custom-rules" }
 
 // Detect returns true if custom rules are configured
 func (p *Provider) Detect(_ context.Context, projectDir string) bool {
-	cfg, _ := config.Load(projectDir)
+	cfg, _, _ := config.Load(projectDir)
 	return len(cfg.CustomRules) > 0
 }
 
