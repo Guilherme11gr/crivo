@@ -1,13 +1,68 @@
 package coverage
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
+
+// stubNpx installs a fake npx executable in PATH that runs the given script
+// body (a shell snippet) and returns the cleanup function.
+func stubNpx(t *testing.T, script string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("npx stub uses a POSIX shell script")
+	}
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "npx")
+	content := "#!/bin/sh\n" + script + "\n"
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAnalyze_StaleSummaryIgnoredWhenSuiteFails(t *testing.T) {
+	// The test suite fails (exit 1) but a stale coverage-summary.json from a
+	// previous run exists on disk. The check must fail — never read the stale
+	// numbers and pass.
+	stubNpx(t, `echo "FAIL src/service.test.ts" >&2; exit 1`)
+
+	dir := t.TempDir()
+	pkg := `{"devDependencies":{"jest":"^29.0.0"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Stale summary from a previous (passing) run.
+	stale := `{"total":{"lines":{"total":100,"covered":95,"skipped":0,"pct":95.0},"branches":{"total":50,"covered":45,"skipped":0,"pct":90.0},"functions":{"total":20,"covered":18,"skipped":0,"pct":90.0},"statements":{"total":120,"covered":110,"skipped":0,"pct":91.7}}}`
+	if err := os.MkdirAll(filepath.Join(dir, "coverage"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "coverage", "coverage-summary.json"), []byte(stale), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	if result.Status != domain.StatusFailed {
+		t.Fatalf("status = %s, want failed (stale summary must not pass)", result.Status)
+	}
+	if result.Metrics != nil {
+		if _, hasLines := result.Metrics["lines"]; hasLines {
+			t.Fatal("lines metric must not come from a stale summary")
+		}
+	}
+}
 
 func TestParseCoverageSummary_ValidJSON(t *testing.T) {
 	summaryJSON := `{

@@ -4,10 +4,55 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
+
+// stubNpx installs a fake npx executable in PATH that runs the given script
+// body (a shell snippet) and returns the cleanup function.
+func stubNpx(t *testing.T, script string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("npx stub uses a POSIX shell script")
+	}
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "npx")
+	content := "#!/bin/sh\n" + script + "\n"
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestAnalyze_TscCrashedWithNoErrorsIsError(t *testing.T) {
+	// tsc exits 1 with no parseable output — the tool crashed, so the check
+	// must report an error, never a pass.
+	stubNpx(t, `echo "error TS5050: Cannot find tsconfig" >&2; exit 1`)
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tsconfig.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	if result.Status != domain.StatusError {
+		t.Fatalf("status = %s, want error (crashed tsc must not pass)", result.Status)
+	}
+	if result.Summary == "0 errors" {
+		t.Fatalf("summary must not claim 0 errors, got %q", result.Summary)
+	}
+	if len(result.Details) == 0 {
+		t.Fatal("expected stderr excerpt in details")
+	}
+}
 
 func TestParseTscOutput_NoErrors(t *testing.T) {
 	issues := parseTscOutput("", "/project")

@@ -139,23 +139,25 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	runErr := cmd.Run()
 	duration := time.Since(start)
 
+	// If the test suite failed, the coverage-summary.json on disk may be stale
+	// from a previous run — never trust it. Report the failure instead.
+	if runErr != nil {
+		output := stdout.String() + stderr.String()
+		return &domain.CheckResult{
+			Name:     p.Name(),
+			ID:       p.ID(),
+			Status:   domain.StatusFailed,
+			Summary:  fmt.Sprintf("Tests failed, no coverage generated (runner: %s)", runner),
+			Details:  extractTestFailures(output),
+			Duration: duration,
+		}, nil
+	}
+
 	// Read coverage summary (same format for both jest and vitest)
 	summaryPath := filepath.Join(projectDir, "coverage", "coverage-summary.json")
 	data, err := os.ReadFile(summaryPath)
 	if err != nil {
 		// No coverage generated
-		if runErr != nil {
-			output := stdout.String() + stderr.String()
-			return &domain.CheckResult{
-				Name:     p.Name(),
-				ID:       p.ID(),
-				Status:   domain.StatusFailed,
-				Summary:  fmt.Sprintf("Tests failed, no coverage generated (runner: %s)", runner),
-				Details:  extractTestFailures(output),
-				Duration: duration,
-			}, nil
-		}
-
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),
