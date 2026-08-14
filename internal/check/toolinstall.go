@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,11 +26,18 @@ import (
 var (
 	toolCacheMu sync.Mutex
 	toolCache   = map[string]string{} // tool name → resolved binary path
+
+	// qgToolDirOverride redirects QGToolDir in tests so installs never touch
+	// the real ~/.qualitygate. Empty in production.
+	qgToolDirOverride string
 )
 
 // QGToolDir returns the directory where quality-gate installs tools.
 // Creates it if it doesn't exist.
 func QGToolDir() string {
+	if qgToolDirOverride != "" {
+		return qgToolDirOverride
+	}
 	home, _ := os.UserHomeDir()
 	if home == "" {
 		home = os.TempDir()
@@ -131,6 +140,13 @@ var toolInstallers = map[string]func() error{
 // Semgrep installer
 // ---------------------------------------------------------------------------
 
+// semgrepVersion pins the semgrep release installed by the auto-installer.
+// Pinned at v1.173.0 — the latest stable release at the time of writing
+// (source: https://api.github.com/repos/semgrep/semgrep/releases/latest,
+// checked 2026-08-14). Bumping this pin is a release note for crivo: a new
+// semgrep version can change findings, which is intentional.
+const semgrepVersion = "1.173.0"
+
 func installSemgrep() error {
 	venvDir := qgVenvDir()
 
@@ -154,7 +170,7 @@ func installSemgrep() error {
 		return fmt.Errorf("pip not found in venv %s", venvDir)
 	}
 
-	cmd := exec.Command(pip, "install", "--upgrade", "semgrep")
+	cmd := exec.Command(pip, "install", "--upgrade", "semgrep=="+semgrepVersion)
 	cmd.Env = append(os.Environ(), "VIRTUAL_ENV="+venvDir)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("pip install semgrep: %s (%w)", string(out), err)
@@ -169,7 +185,33 @@ func installSemgrep() error {
 
 const gitleaksVersion = "8.24.3"
 
+// gitleaksChecksums pins the sha256 of every gitleaks 8.24.3 release asset we
+// can install. Hashes are taken verbatim from the official release checksums:
+// https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_checksums.txt
+// (fetched 2026-08-14). When bumping gitleaksVersion, update this map from the
+// new release's checksums.txt — a mismatch is a hard install failure.
+var gitleaksChecksums = map[string]string{
+	"linux_amd64":   "9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c",
+	"linux_arm64":   "5f2edbe1f49f7b920f9e06e90759947d3c5dfc16f752fb93aaafc17e9d14cf07",
+	"darwin_amd64":  "41c44ae8ad1d6eef57d4526ad0fd67d8129eee9a856f55c2b3b9395fd3d9ec0f",
+	"darwin_arm64":  "b90f13bb8c90ab72083d9b0c842e39dafb82c0e5c3f872f407366b7a58909013",
+	"windows_amd64": "3f1a35578631dbfe633cc5b49e6c906e55ff14a4bfd7336a10fb27fe33b6dcd2",
+}
+
+// gitleaksDownloadTimeout bounds the whole gitleaks download (headers + body).
+const gitleaksDownloadTimeout = 60 * time.Second
+
+// gitleaksHTTPClient is swappable in tests (e.g. to exercise the timeout).
+var gitleaksHTTPClient = &http.Client{Timeout: gitleaksDownloadTimeout}
+
 func installGitleaks() error {
+	return installGitleaksFrom("https://github.com/gitleaks/gitleaks/releases/download/v" + gitleaksVersion)
+}
+
+// installGitleaksFrom downloads, verifies and extracts the gitleaks binary for
+// the current platform. baseURL points at the release directory (the official
+// GitHub release in production, an httptest server in tests).
+func installGitleaksFrom(baseURL string) error {
 	toolDir := QGToolDir()
 
 	osName := runtime.GOOS
@@ -188,15 +230,18 @@ func installGitleaks() error {
 		fileName = fmt.Sprintf("gitleaks_%s_darwin_arm64.tar.gz", gitleaksVersion)
 	case osName == "windows" && arch == "amd64":
 		fileName = fmt.Sprintf("gitleaks_%s_windows_x64.zip", gitleaksVersion)
-	case osName == "windows" && arch == "arm64":
-		fileName = fmt.Sprintf("gitleaks_%s_windows_arm64.zip", gitleaksVersion)
 	default:
 		return fmt.Errorf("unsupported platform: %s/%s — install gitleaks manually", osName, arch)
 	}
 
-	url := fmt.Sprintf("https://github.com/gitleaks/gitleaks/releases/download/v%s/%s", gitleaksVersion, fileName)
+	expectedHash, ok := gitleaksChecksums[osName+"_"+arch]
+	if !ok {
+		return fmt.Errorf("no pinned checksum for gitleaks %s on %s/%s — install gitleaks manually", gitleaksVersion, osName, arch)
+	}
 
-	resp, err := http.Get(url)
+	url := fmt.Sprintf("%s/%s", baseURL, fileName)
+
+	resp, err := gitleaksHTTPClient.Get(url)
 	if err != nil {
 		return fmt.Errorf("downloading gitleaks: %w", err)
 	}
@@ -209,6 +254,12 @@ func installGitleaks() error {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading gitleaks download: %w", err)
+	}
+
+	// Verify integrity before writing anything to disk.
+	actualHash := fmt.Sprintf("%x", sha256.Sum256(body))
+	if actualHash != expectedHash {
+		return fmt.Errorf("gitleaks checksum mismatch for %s: expected %s, got %s", fileName, expectedHash, actualHash)
 	}
 
 	binName := "gitleaks"
