@@ -1,0 +1,49 @@
+# security-ts — embedded pack of security rules for TypeScript/JavaScript.
+#
+# Versioned with the crivo binary (a pack bump is a release). Enable from
+# .qualitygate.yaml:
+#
+#   include:
+#     - "pack:security-ts"
+#
+# Rules are ported from the canonical examples in
+# .claude/skills/custom-rules/SKILL.md and ship with per-rule fixtures so a
+# future crivo validates them at compile time.
+custom-rules:
+  - id: no-eval
+    type: semgrep
+    pattern: "eval(...)"
+    language: ts
+    message: "eval() is a security risk. Use safer alternatives."
+    severity: blocker
+    tests:
+      - code: "const x = eval(userInput)"
+        match: true
+      - code: "const x = evaluate(userInput)"
+        match: false
+
+  - id: no-innerhtml
+    type: semgrep
+    pattern: "$X.innerHTML = $Y"
+    language: ts
+    files: "src/**/*.{ts,tsx}"
+    message: "Direct innerHTML assignment is an XSS risk. Use DOMPurify or React."
+    severity: blocker
+    tests:
+      - code: "el.innerHTML = userInput"
+        match: true
+      - code: "el.textContent = userInput"
+        match: false
+
+  - id: no-dangerouslysetinnerhtml
+    type: semgrep
+    pattern: "<$EL dangerouslySetInnerHTML={ $X } />"
+    language: ts
+    files: "src/**/*.{ts,tsx}"
+    message: "dangerouslySetInnerHTML is an XSS risk. Use DOMPurify or React components."
+    severity: blocker
+    tests:
+      - code: "<div dangerouslySetInnerHTML={{ __html: userInput }} />"
+        match: true
+      - code: "<div>{userInput}</div>"
+        match: false

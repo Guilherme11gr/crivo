@@ -11,17 +11,405 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
+// forceSemgrepUnavailable makes every lookup path miss: PATH stripped, HOME
+// redirected (so ~/.qualitygate/bin and the venv are not found), auto-install
+// disabled, and the process-wide tool cache cleared. Tests that assert the
+// "semgrep absent" behavior MUST use this — a machine with semgrep installed
+// (or an earlier stub test in the same process) would otherwise leak in.
+func forceSemgrepUnavailable(t *testing.T) {
+	t.Helper()
+	check.ResetToolCacheForTests()
+	t.Setenv("PATH", "/nonexistent-bin")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+}
+
+// ─── Embedded pack (plan 008 spike) ─────────────────────────────────────────
+
+func TestProvider_Analyze_EmbeddedPackCompiles(t *testing.T) {
+	// The security-ts pack must load through config.Load (include: pack:...) and
+	// compile cleanly — its semgrep fixtures are unvalidated warnings without the
+	// binary, never errors.
+	dir := t.TempDir()
+	writeFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "pack:security-ts"
+`)
+	forceSemgrepUnavailable(t)
+
+	cfg, _, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(cfg.CustomRules) != 3 {
+		t.Fatalf("expected 3 pack rules, got %d", len(cfg.CustomRules))
+	}
+
+	compiled, errs, warnings := CompileRules(cfg.CustomRules)
+	if len(errs) > 0 {
+		t.Fatalf("pack rules must compile, got %d errors: %v", len(errs), errs)
+	}
+	if len(compiled) != 3 {
+		t.Fatalf("expected 3 compiled rules, got %d", len(compiled))
+	}
+	// All three pack rules are semgrep rules with fixtures: without the binary
+	// each must produce a NOT-validated warning.
+	if len(warnings) != 3 {
+		t.Fatalf("expected 3 fixture warnings (one per semgrep rule), got %d: %#v", len(warnings), warnings)
+	}
+}
+
+func TestProvider_Analyze_IncludeDuplicateIDFailsCompile(t *testing.T) {
+	// A pack rule colliding with a local rule ID must fail compilation with a
+	// duplicate-id error — the pack flows through the same CompileRules path.
+	dir := t.TempDir()
+	writeFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "pack:security-ts"
+custom-rules:
+  - id: no-eval
+    type: ban-pattern
+    pattern: "eval\\("
+    message: "No eval"
+`)
+	forceSemgrepUnavailable(t)
+
+	cfg, _, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusError {
+		t.Fatalf("expected error status for duplicate rule id, got %s", result.Status)
+	}
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "duplicate id") && strings.Contains(d, "no-eval") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a duplicate-id detail naming the rule, got %#v", result.Details)
+	}
+}
+
 // ─── Rule Compilation ───────────────────────────────────────────────────────
+
+// ─── Test Fixtures (plan 008) ────────────────────────────────────────────────
+
+func TestCompileRules_FixtureBanPatternPasses(t *testing.T) {
+	rules := []config.CustomRule{
+		{
+			ID: "no-eval", Type: "ban-pattern", Pattern: `\beval\s*\(`, Message: "No eval",
+			Tests: []config.TestSpec{
+				{Code: "const x = eval(userInput)", Match: true},
+				{Code: "const x = evaluate(userInput)", Match: false},
+			},
+		},
+	}
+	compiled, errs, _ := CompileRules(rules)
+	if len(errs) > 0 {
+		t.Fatalf("expected no errors for correct fixtures, got: %v", errs)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(compiled))
+	}
+}
+
+func TestCompileRules_FixtureBanPatternWrongExpectationIsError(t *testing.T) {
+	// The fixture says the code must NOT match, but the pattern does match it.
+	rules := []config.CustomRule{
+		{
+			ID: "no-eval", Type: "ban-pattern", Pattern: `\beval\s*\(`, Message: "No eval",
+			Tests: []config.TestSpec{
+				{Code: "const x = eval(userInput)", Match: false},
+			},
+		},
+	}
+	_, errs, _ := CompileRules(rules)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 fixture error, got %d: %v", len(errs), errs)
+	}
+	msg := errs[0].Error()
+	if !strings.Contains(msg, "no-eval") {
+		t.Errorf("error should cite the rule id, got %q", msg)
+	}
+	if !strings.Contains(msg, "fixture 1") {
+		t.Errorf("error should cite the fixture case, got %q", msg)
+	}
+	if !strings.Contains(msg, "const x = eval(userInput)") {
+		t.Errorf("error should cite the fixture code, got %q", msg)
+	}
+	if !strings.Contains(msg, "expected the rule to NOT match") {
+		t.Errorf("error should state expected vs got, got %q", msg)
+	}
+}
+
+func TestCompileRules_FixtureBanPatternMissedMatchIsError(t *testing.T) {
+	// The fixture says the code MUST match, but the pattern does not fire.
+	rules := []config.CustomRule{
+		{
+			ID: "no-eval", Type: "ban-pattern", Pattern: `\beval\s*\(`, Message: "No eval",
+			Tests: []config.TestSpec{
+				{Code: "const x = evaluate(userInput)", Match: true},
+			},
+		},
+	}
+	_, errs, _ := CompileRules(rules)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 fixture error, got %d: %v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Error(), "expected the rule to match, but it did not") {
+		t.Errorf("unexpected error message: %q", errs[0].Error())
+	}
+}
+
+func TestCompileRules_FixtureBanImport(t *testing.T) {
+	rules := []config.CustomRule{
+		{
+			ID: "no-moment", Type: "ban-import", Packages: []string{"moment"}, Message: "Use date-fns",
+			Tests: []config.TestSpec{
+				{Code: "import moment from 'moment'", Match: true},
+				{Code: "import { format } from 'date-fns'", Match: false},
+			},
+		},
+	}
+	compiled, errs, _ := CompileRules(rules)
+	if len(errs) > 0 {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(compiled))
+	}
+}
+
+func TestCompileRules_FixtureMaxLines(t *testing.T) {
+	rules := []config.CustomRule{
+		{
+			ID: "component-size", Type: "max-lines", MaxLines: 3, Message: "Too big",
+			Tests: []config.TestSpec{
+				{Code: "a\nb\nc\nd", Match: true}, // 4 lines > 3
+				{Code: "a\nb\nc", Match: false},   // 3 lines == 3
+			},
+		},
+	}
+	compiled, errs, _ := CompileRules(rules)
+	if len(errs) > 0 {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(compiled))
+	}
+}
+
+func TestCompileRules_FixtureRequireImport(t *testing.T) {
+	rules := []config.CustomRule{
+		{
+			ID: "dates-from-utils", Type: "require-import",
+			MustImportFrom: "@/shared/utils/date-utils",
+			WhenPattern:    `formatDate`,
+			Message:        "Import from date-utils",
+			Tests: []config.TestSpec{
+				{Code: "const d = formatDate(new Date())", Match: true},
+				{Code: "import { formatDate } from '@/shared/utils/date-utils'\nconst d = formatDate(new Date())", Match: false},
+			},
+		},
+	}
+	compiled, errs, _ := CompileRules(rules)
+	if len(errs) > 0 {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(compiled))
+	}
+}
+
+func TestCompileRules_FixtureEnforcePattern(t *testing.T) {
+	rules := []config.CustomRule{
+		{
+			ID: "api-rate-limit", Type: "enforce-pattern", Pattern: `applyRateLimit`, Message: "Need rate limiting",
+			Tests: []config.TestSpec{
+				{Code: "export function GET() {}", Match: true},
+				{Code: "applyRateLimit(req)", Match: false},
+			},
+		},
+	}
+	compiled, errs, _ := CompileRules(rules)
+	if len(errs) > 0 {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(compiled))
+	}
+}
+
+func TestCompileRules_FixtureEmptyCodeIsError(t *testing.T) {
+	rules := []config.CustomRule{
+		{
+			ID: "no-eval", Type: "ban-pattern", Pattern: `eval`, Message: "No eval",
+			Tests: []config.TestSpec{{Code: "", Match: true}},
+		},
+	}
+	_, errs, _ := CompileRules(rules)
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "empty 'code'") {
+		t.Fatalf("expected empty-code error, got: %v", errs)
+	}
+}
+
+func TestCompileRules_FixtureCollectsAllErrors(t *testing.T) {
+	rules := []config.CustomRule{
+		{
+			ID: "a", Type: "ban-pattern", Pattern: `eval`, Message: "m",
+			Tests: []config.TestSpec{{Code: "eval(x)", Match: false}},
+		},
+		{
+			ID: "b", Type: "ban-pattern", Pattern: `eval`, Message: "m",
+			Tests: []config.TestSpec{{Code: "eval(x)", Match: false}},
+		},
+	}
+	_, errs, _ := CompileRules(rules)
+	if len(errs) != 2 {
+		t.Fatalf("expected 2 fixture errors (one per rule), got %d: %v", len(errs), errs)
+	}
+}
+
+func TestCompileRules_FixtureSemgrepWithoutBinaryWarns(t *testing.T) {
+	// semgrep is not installed in this environment: fixtures must NOT fail
+	// compilation — they are collected as a warning (plan 008, coherent with
+	// plan 002's runtime skip).
+	forceSemgrepUnavailable(t)
+
+	rules := []config.CustomRule{
+		{
+			ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "No eval",
+			Tests: []config.TestSpec{
+				{Code: "const x = eval(userInput)", Match: true},
+			},
+		},
+	}
+	compiled, errs, warnings := CompileRules(rules)
+	if len(errs) > 0 {
+		t.Fatalf("expected no errors when semgrep is unavailable, got: %v", errs)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(compiled))
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("expected 1 warning about unvalidated fixtures, got %d: %#v", len(warnings), warnings)
+	}
+	if !strings.Contains(warnings[0], "no-eval") || !strings.Contains(warnings[0], "NOT validated") {
+		t.Errorf("expected warning naming the rule and the unvalidated state, got %q", warnings[0])
+	}
+}
+
+func TestCompileRules_FixtureBanDependencyWarns(t *testing.T) {
+	// ban-dependency matches package.json on disk, not code: fixtures cannot be
+	// validated and must not fail compilation.
+	rules := []config.CustomRule{
+		{
+			ID: "no-axios", Type: "ban-dependency", Packages: []string{"axios"}, Message: "Use fetch",
+			Tests: []config.TestSpec{{Code: "anything", Match: true}},
+		},
+	}
+	compiled, errs, warnings := CompileRules(rules)
+	if len(errs) > 0 {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	if len(compiled) != 1 {
+		t.Fatalf("expected 1 compiled rule, got %d", len(compiled))
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "no-axios") {
+		t.Fatalf("expected a ban-dependency fixture warning, got %#v", warnings)
+	}
+}
+
+func TestProvider_Analyze_FixtureErrorFailsCompilation(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = 1\n")
+
+	cfg := config.DefaultConfig()
+	cfg.CustomRules = []config.CustomRule{
+		{
+			ID: "no-eval", Type: "ban-pattern", Pattern: `\beval\s*\(`, Message: "No eval",
+			Tests: []config.TestSpec{{Code: "const x = eval(userInput)", Match: false}},
+		},
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusError {
+		t.Fatalf("expected error status (fixture disagrees with matcher), got %s", result.Status)
+	}
+	if !strings.Contains(result.Summary, "compilation errors") {
+		t.Errorf("expected compilation error summary, got %q", result.Summary)
+	}
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "no-eval") && strings.Contains(d, "fixture 1") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a detail citing the rule and fixture case, got %#v", result.Details)
+	}
+}
+
+func TestProvider_Analyze_FixtureWarningSurfaced(t *testing.T) {
+	dir := t.TempDir()
+	srcDir := filepath.Join(dir, "src")
+	os.MkdirAll(srcDir, 0755)
+	writeFile(t, srcDir, "app.ts", "const x = 1\n")
+
+	forceSemgrepUnavailable(t)
+
+	cfg := config.DefaultConfig()
+	cfg.CustomRules = []config.CustomRule{
+		{
+			ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "No eval",
+			Tests: []config.TestSpec{{Code: "const x = eval(userInput)", Match: true}},
+		},
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The rule still compiles; the runtime semgrep skip forces a warning status.
+	if result.Status != domain.StatusWarning {
+		t.Fatalf("expected warning (semgrep skipped), got %s", result.Status)
+	}
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "NOT validated") && strings.Contains(d, "no-eval") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a fixture-not-validated detail, got %#v", result.Details)
+	}
+}
 
 func TestCompileRules_ValidBanImport(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "no-moment", Type: "ban-import", Packages: []string{"moment"}, Message: "Use date-fns"},
 	}
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -40,7 +428,7 @@ func TestCompileRules_ValidBanPattern(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "no-raw-date", Type: "ban-pattern", Pattern: `new Date\(`, Message: "Use createLocalDate()", Severity: "blocker"},
 	}
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -56,7 +444,7 @@ func TestCompileRules_MissingID(t *testing.T) {
 	rules := []config.CustomRule{
 		{Type: "ban-import", Packages: []string{"moment"}, Message: "no"},
 	}
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "missing required field 'id'") {
 		t.Fatalf("expected missing id error, got: %v", errs)
 	}
@@ -67,7 +455,7 @@ func TestCompileRules_DuplicateID(t *testing.T) {
 		{ID: "dup", Type: "ban-import", Packages: []string{"x"}, Message: "m"},
 		{ID: "dup", Type: "ban-import", Packages: []string{"y"}, Message: "m"},
 	}
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "duplicate id") {
 		t.Fatalf("expected duplicate id error, got: %v", errs)
 	}
@@ -77,7 +465,7 @@ func TestCompileRules_UnknownType(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "x", Type: "unknown-type", Message: "m"},
 	}
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "unknown type") {
 		t.Fatalf("expected unknown type error, got: %v", errs)
 	}
@@ -87,7 +475,7 @@ func TestCompileRules_InvalidRegex(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "bad-re", Type: "ban-pattern", Pattern: "[invalid", Message: "m"},
 	}
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "invalid regex") {
 		t.Fatalf("expected invalid regex error, got: %v", errs)
 	}
@@ -108,7 +496,7 @@ func TestCompileRules_MissingRequiredFields(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, errs := CompileRules([]config.CustomRule{tt.rule})
+			_, errs, _ := CompileRules([]config.CustomRule{tt.rule})
 			if len(errs) != 1 || !strings.Contains(errs[0].Error(), tt.want) {
 				t.Fatalf("expected error containing %q, got: %v", tt.want, errs)
 			}
@@ -120,7 +508,7 @@ func TestCompileRules_MissingMessage(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "x", Type: "ban-import", Packages: []string{"moment"}},
 	}
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "missing required field 'message'") {
 		t.Fatalf("expected missing message error, got: %v", errs)
 	}
@@ -131,7 +519,7 @@ func TestCompileRules_CollectsAllErrors(t *testing.T) {
 		{ID: "a", Type: "ban-pattern", Message: "m"}, // missing pattern
 		{ID: "b", Type: "unknown", Message: "m"},     // unknown type
 	}
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 2 {
 		t.Fatalf("expected 2 errors, got %d: %v", len(errs), errs)
 	}
@@ -681,7 +1069,7 @@ func TestCompileRules_IgnoreTestsDefault(t *testing.T) {
 		{ID: "ban-i", Type: "ban-import", Packages: []string{"x"}, Message: "m"},
 		{ID: "enf-p", Type: "enforce-pattern", Pattern: "bar", Message: "m"},
 	}
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -716,7 +1104,7 @@ func TestCompileRules_IgnoreTestsExplicitFalse(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "no-console", Type: "ban-pattern", Pattern: "console", Message: "m", IgnoreTests: &f},
 	}
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -817,7 +1205,7 @@ func TestCompileRules_AdvisoryMode(t *testing.T) {
 		{ID: "adv", Type: "ban-pattern", Pattern: "TODO", Message: "m", Mode: "advisory"},
 		{ID: "block", Type: "ban-pattern", Pattern: "FIXME", Message: "m"},
 	}
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -891,7 +1279,7 @@ func TestCompileRules_MaxLines(t *testing.T) {
 		{ID: "component-size", Type: "max-lines", MaxLines: 300, Message: "Split large components", Severity: "major"},
 	}
 
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -908,7 +1296,7 @@ func TestCompileRules_MaxLinesRequiresPositiveLimit(t *testing.T) {
 		{ID: "component-size", Type: "max-lines", MaxLines: 0, Message: "Split large components"},
 	}
 
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "requires positive 'max-lines'") {
 		t.Fatalf("expected max-lines validation error, got %v", errs)
 	}
@@ -963,7 +1351,7 @@ func TestCompileRules_Semgrep(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "Do not use eval", Severity: "blocker"},
 	}
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -979,7 +1367,7 @@ func TestCompileRules_SemgrepCustomLanguage(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "no-eval-py", Type: "semgrep", Pattern: "eval(...)", Message: "No eval", Language: "python"},
 	}
-	compiled, errs := CompileRules(rules)
+	compiled, errs, _ := CompileRules(rules)
 	if len(errs) > 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -992,7 +1380,7 @@ func TestCompileRules_SemgrepRequiresPattern(t *testing.T) {
 	rules := []config.CustomRule{
 		{ID: "bad", Type: "semgrep", Message: "m"},
 	}
-	_, errs := CompileRules(rules)
+	_, errs, _ := CompileRules(rules)
 	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "semgrep requires 'pattern'") {
 		t.Fatalf("expected semgrep pattern error, got: %v", errs)
 	}
@@ -1107,8 +1495,7 @@ func TestBuildSemgrepBatchConfig_AllOptions(t *testing.T) {
 func TestMatchSemgrepBatch_NotInstalled(t *testing.T) {
 	// Force semgrep unavailable: strip it from PATH and disable auto-install so
 	// the test never attempts a real pip install.
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	rules := []CompiledRule{
 		{
@@ -1273,8 +1660,7 @@ func TestProvider_Analyze_SemgrepUnavailableWarns(t *testing.T) {
 
 	// Strip semgrep from PATH and disable auto-install so this never attempts
 	// a real pip install.
-	t.Setenv("PATH", "/nonexistent-bin")
-	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+	forceSemgrepUnavailable(t)
 
 	cfg := config.DefaultConfig()
 	cfg.CustomRules = []config.CustomRule{
@@ -1329,6 +1715,9 @@ var (
 
 func semgrepStubBin(t *testing.T) {
 	t.Helper()
+	// A previous test in this process may have cached the real semgrep
+	// (machines with it installed): clear so the stub on PATH wins.
+	check.ResetToolCacheForTests()
 	semgrepStubOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "crivo-customrules-semgrep-stub-*")
 		if err != nil {
@@ -1454,6 +1843,33 @@ func TestMatchSemgrepBatch_StubAllowInFiltersFinding(t *testing.T) {
 	}
 	if len(issues) != 0 {
 		t.Errorf("expected 0 issues when the finding path is allow-listed, got %d: %#v", len(issues), issues)
+	}
+}
+
+func TestCompileRules_FixtureSemgrepValidatedWithBinary(t *testing.T) {
+	// With the semgrep binary available, semgrep fixtures are validated for
+	// real: a fixture that disagrees with the scan result is a compile error.
+	// The stub reports a finding for check_id "no-eval" on any input.
+	semgrepStubBin(t)
+
+	rules := []config.CustomRule{
+		{
+			ID: "no-eval", Type: "semgrep", Pattern: "eval(...)", Message: "No eval",
+			Tests: []config.TestSpec{
+				{Code: "const x = eval(userInput)", Match: true},  // stub finds it → ok
+				{Code: "const x = evaluate(userInput)", Match: false}, // stub finds it → error
+			},
+		},
+	}
+	_, errs, warnings := CompileRules(rules)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 fixture error (stub always matches), got %d: %v", len(errs), errs)
+	}
+	if !strings.Contains(errs[0].Error(), "no-eval") || !strings.Contains(errs[0].Error(), "fixture 2") {
+		t.Errorf("error should cite rule and fixture case, got %q", errs[0].Error())
+	}
+	if len(warnings) != 0 {
+		t.Errorf("expected no warnings when the binary is available, got %#v", warnings)
 	}
 }
 
@@ -1598,7 +2014,7 @@ func writeFile(t *testing.T, dir, name, content string) {
 // regex fields (ImportRes, MustImportRe) are populated.
 func compileRule(tb testing.TB, raw config.CustomRule) CompiledRule {
 	tb.Helper()
-	compiled, errs := CompileRules([]config.CustomRule{raw})
+	compiled, errs, _ := CompileRules([]config.CustomRule{raw})
 	if len(errs) > 0 {
 		tb.Fatalf("compileRule(%q): unexpected errors: %v", raw.ID, errs)
 	}

@@ -225,6 +225,42 @@ custom-rules:
 
 `mode: advisory` reporta a violação, mas não bloqueia o gate.
 
+### Fixtures de regra (`tests`)
+
+Cada regra pode declarar fixtures validadas na compilação — uma fixture que
+discorda do matcher falha o `crivo run` citando a regra e o caso:
+
+```yaml
+custom-rules:
+  - id: no-eval
+    type: ban-pattern
+    pattern: "\\beval\\s*\\("
+    message: "eval() é risco de segurança"
+    severity: blocker
+    tests:
+      - code: "const x = eval(userInput)"     # deve casar
+        match: true
+      - code: "const x = evaluate(userInput)" # não deve casar
+        match: false
+```
+
+Regras `semgrep` só validam fixtures com o binário instalado (sem binário ⇒
+warning, não erro). Regras `ban-dependency` não usam fixtures (casam
+`package.json`, não código).
+
+### Packs de regras (`include`)
+
+Packs embutidos e arquivos de regras locais entram via `include`:
+
+```yaml
+include:
+  - "pack:security-ts"   # pack embutido no binário (no-eval, no-innerhtml, ...)
+  - "./rules/team.yaml"  # arquivo YAML relativo ao projeto
+```
+
+Packs são versionados com o binário; registry remota é decisão futura. IDs
+duplicados entre pack e regras locais falham a compilação.
+
 ## Saídas
 
 - Terminal: resumo visual com status, ratings, checks e issues.

@@ -32,6 +32,15 @@ var (
 	qgToolDirOverride string
 )
 
+// ResetToolCacheForTests clears the process-wide tool lookup cache. Test-only:
+// availability tests must not observe lookups (or stubs) resolved by earlier
+// tests in the same process.
+func ResetToolCacheForTests() {
+	toolCacheMu.Lock()
+	defer toolCacheMu.Unlock()
+	toolCache = map[string]string{}
+}
+
 // QGToolDir returns the directory where quality-gate installs tools.
 // Creates it if it doesn't exist.
 func QGToolDir() string {

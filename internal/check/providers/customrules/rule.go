@@ -50,10 +50,17 @@ type CompiledRule struct {
 	Language       string   // semgrep language (e.g. "ts", "python", "go")
 }
 
-// CompileRules validates and compiles all custom rules, collecting all errors at once
-func CompileRules(rules []config.CustomRule) ([]CompiledRule, []error) {
+// CompileRules validates and compiles all custom rules, collecting all errors at once.
+// Per-rule test fixtures (raw.Tests) are validated after pre-compilation: each spec
+// runs against the rule's matcher and a disagreement is a compile error naming the
+// rule and the fixture case. Semgrep fixtures are validated only when the semgrep
+// binary is available; without it the validation is collected as a warning, never an
+// error — the rule still compiles and the runtime skip/warning path (plan 002) reports
+// the unverified state.
+func CompileRules(rules []config.CustomRule) ([]CompiledRule, []error, []string) {
 	var compiled []CompiledRule
 	var errs []error
+	var warnings []string
 
 	seenIDs := map[string]bool{}
 
@@ -211,7 +218,100 @@ func CompileRules(rules []config.CustomRule) ([]CompiledRule, []error) {
 		compiled = append(compiled, cr)
 	}
 
-	return compiled, errs
+	// Validate per-rule fixtures after pre-compilation: only fully compiled rules
+	// with tests participate.
+	if len(compiled) > 0 {
+		errs = append(errs, validateFixtures(compiled)...)
+		warnings = append(warnings, fixtureWarnings(compiled)...)
+	}
+
+	return compiled, errs, warnings
+}
+
+// fixtureFilePath is the synthetic file path used when validating fixtures in
+// memory. The name must be a plausible TS file so allow-in globs and test-file
+// detection behave exactly as they would on a real source file.
+const fixtureFilePath = "src/fixture.ts"
+
+// fixtureMatches runs the compiled rule's matcher against Code as a synthetic
+// file and reports whether the rule fired. The second return is false when the
+// fixture could NOT be validated: semgrep rules without a binary (mirrors the
+// runtime skip, plan 002) and ban-dependency rules (they match package.json,
+// not code). Unvalidated fixtures surface as warnings, never errors.
+func fixtureMatches(rule CompiledRule, code string) (bool, bool) {
+	switch rule.Type {
+	case RuleTypeSemgrep:
+		return validateSemgrepFixture(rule, code)
+	case RuleTypeBanDependency:
+		return false, false
+	default:
+		lines := strings.Split(code, "\n")
+		var fired bool
+		switch rule.Type {
+		case RuleTypeBanImport:
+			fired = len(matchBanImport(rule, fixtureFilePath, lines)) > 0
+		case RuleTypeBanPattern:
+			fired = len(matchBanPattern(rule, fixtureFilePath, lines)) > 0
+		case RuleTypeRequireImport:
+			fired = len(matchRequireImport(rule, fixtureFilePath, code)) > 0
+		case RuleTypeEnforcePattern:
+			fired = len(matchEnforcePattern(rule, fixtureFilePath, code)) > 0
+		case RuleTypeMaxLines:
+			fired = len(matchMaxLines(rule, fixtureFilePath, lines)) > 0
+		}
+		return fired, true
+	}
+}
+
+// validateFixtures checks every test spec of every compiled rule against the
+// rule's matcher. A spec that disagrees with the matcher is a compile error
+// naming the rule and the case — a rule author must learn a fixture is wrong
+// when the rule is compiled, not when it silently fires on real code.
+func validateFixtures(compiled []CompiledRule) []error {
+	var errs []error
+	for _, rule := range compiled {
+		for i, spec := range rule.Raw.Tests {
+			if len(spec.Code) == 0 {
+				errs = append(errs, fmt.Errorf("rule %s: fixture %d: empty 'code'", rule.Raw.ID, i+1))
+				continue
+			}
+			got, validated := fixtureMatches(rule, spec.Code)
+			if !validated || got == spec.Match {
+				continue
+			}
+			if spec.Match {
+				errs = append(errs, fmt.Errorf("rule %s: fixture %d failed: code %q — expected the rule to match, but it did not", rule.Raw.ID, i+1, spec.Code))
+			} else {
+				errs = append(errs, fmt.Errorf("rule %s: fixture %d failed: code %q — expected the rule to NOT match, but it did", rule.Raw.ID, i+1, spec.Code))
+			}
+		}
+	}
+	return errs
+}
+
+// fixtureWarnings collects non-fatal fixture validation notes: semgrep fixtures
+// cannot run without the binary (the runtime already skips semgrep rules and
+// surfaces that as a warning — plan 002), and ban-dependency fixtures operate on
+// package.json, not on code.
+func fixtureWarnings(compiled []CompiledRule) []string {
+	var warnings []string
+	for _, rule := range compiled {
+		if len(rule.Raw.Tests) == 0 {
+			continue
+		}
+		switch rule.Type {
+		case RuleTypeSemgrep:
+			if !isSemgrepAvailable() {
+				warnings = append(warnings, fmt.Sprintf(
+					"rule %s: %d fixture(s) NOT validated — semgrep binary unavailable (install semgrep to validate fixtures)",
+					rule.Raw.ID, len(rule.Raw.Tests)))
+			}
+		case RuleTypeBanDependency:
+			warnings = append(warnings, fmt.Sprintf(
+				"rule %s: fixtures skipped — ban-dependency matches package.json, not code", rule.Raw.ID))
+		}
+	}
+	return warnings
 }
 
 // testGlobPatterns are the default glob patterns for test files
