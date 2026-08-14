@@ -335,6 +335,22 @@ func TestGenerateMarkdown_Footer(t *testing.T) {
 	}
 }
 
+func TestGenerateMarkdown_SkippedChecksGetExplicitLine(t *testing.T) {
+	result := newTestResult()
+	result.Checks = append(result.Checks, domain.CheckResult{
+		Name:    "Dead Code",
+		ID:      "dead-code",
+		Status:  domain.StatusSkipped,
+		Summary: "knip not available",
+	})
+
+	md := GenerateMarkdown(result)
+
+	if !strings.Contains(md, "⚠ skipped: Dead Code — knip not available") {
+		t.Errorf("markdown should render an explicit skipped line, got:\n%s", md)
+	}
+}
+
 // --- formatDuration tests ---
 
 func TestFormatDuration_SubSecond(t *testing.T) {

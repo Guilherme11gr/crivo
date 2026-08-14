@@ -312,17 +312,21 @@ func runAnalysis(opts options) int {
 	}
 
 	// Baseline comparison: check for regressions against last saved run
-	applyBaselineComparison(analysis, projectDir, opts)
+	applyBaselineComparison(analysis, projectDir, opts, cfg)
 
 	// Calculate ratings and evaluate quality gate
-	rating.EvaluateQualityGate(analysis, string(cfg.Policy))
+	rating.EvaluateQualityGate(analysis, string(cfg.Policy), rating.ThresholdsFromConfig(cfg))
 
 	// Save to history if requested
 	if opts.save {
 		s, err := store.Open(projectDir)
 		if err == nil {
 			defer s.Close()
-			s.SaveAnalysis(analysis, branch, commit)
+			mode := "overall"
+			if opts.newCode {
+				mode = "new-code"
+			}
+			s.SaveAnalysis(analysis, branch, commit, mode)
 			s.SyncIssues(analysis.AllIssues())
 		}
 	}
@@ -415,6 +419,12 @@ func recomputeIssueDrivenCheck(check *domain.CheckResult) {
 		recomputeDuplicationCheck(check)
 	case "custom-rules":
 		recomputeCustomRulesCheck(check)
+	case "coverage":
+		recomputeCoverageCheck(check)
+	case "dead-code":
+		recomputeDeadCodeCheck(check)
+	case "complexity":
+		recomputeComplexityCheck(check)
 	}
 }
 
@@ -529,17 +539,108 @@ func recomputeDuplicationCheck(check *domain.CheckResult) {
 	ensureMetrics(check)
 	check.Metrics["clones"] = float64(count - semanticClones)
 	check.Metrics["semantic_clones"] = float64(semanticClones)
+	// new_code_clones is the count of clones remaining in new code. The
+	// percentage metric is deliberately removed: without a real analysis of
+	// the new-code subset there is no honest percentage, and rating.go only
+	// emits the duplication_pct condition when the metric exists.
+	delete(check.Metrics, "percentage")
+	check.Metrics["new_code_clones"] = float64(count)
 
 	if count == 0 {
-		check.Metrics["percentage"] = 0
 		check.Status = domain.StatusPassed
 		check.Summary = "0 duplications in new code"
 		return
 	}
 
-	check.Metrics["percentage"] = 100
 	check.Status = domain.StatusFailed
 	check.Summary = fmt.Sprintf("%d duplications in new code", count)
+}
+
+// recomputeCoverageCheck recomputes the coverage check after new-code
+// filtering. Coverage data is whole-repo; when no new-code coverage data
+// exists the check reports a warning and drops the coverage metrics so no
+// coverage_lines condition is built from stale whole-repo numbers.
+func recomputeCoverageCheck(check *domain.CheckResult) {
+	if len(check.Issues) == 0 {
+		// No per-file issues survived the filter — but that does not mean the
+		// new code is covered. Without new-code coverage data, report a
+		// warning and drop the metrics so the gate does not silently pass on
+		// stale whole-repo data.
+		check.Status = domain.StatusWarning
+		check.Summary = "no coverage data in new code"
+		if check.Metrics != nil {
+			delete(check.Metrics, "lines")
+			delete(check.Metrics, "branches")
+			delete(check.Metrics, "functions")
+			delete(check.Metrics, "statements")
+		}
+		return
+	}
+	check.Status = domain.StatusFailed
+	check.Summary = fmt.Sprintf("%d files below coverage threshold in new code", len(check.Issues))
+}
+
+// recomputeDeadCodeCheck recomputes the dead-code check after new-code
+// filtering.
+func recomputeDeadCodeCheck(check *domain.CheckResult) {
+	unusedFiles := 0
+	unusedExports := 0
+	unusedDeps := 0
+	for _, issue := range check.Issues {
+		switch issue.RuleID {
+		case "unused-file":
+			unusedFiles++
+		case "unused-export", "unused-type":
+			unusedExports++
+		case "unused-dependency":
+			unusedDeps++
+		}
+	}
+	ensureMetrics(check)
+	check.Metrics["unused_files"] = float64(unusedFiles)
+	check.Metrics["unused_exports"] = float64(unusedExports)
+	check.Metrics["unused_deps"] = float64(unusedDeps)
+
+	if len(check.Issues) == 0 {
+		check.Status = domain.StatusPassed
+		check.Summary = "No dead code detected in new code"
+		return
+	}
+
+	parts := []string{}
+	if unusedFiles > 0 {
+		parts = append(parts, strconv.Itoa(unusedFiles)+" unused files")
+	}
+	if unusedExports > 0 {
+		parts = append(parts, strconv.Itoa(unusedExports)+" unused exports")
+	}
+	if unusedDeps > 0 {
+		parts = append(parts, strconv.Itoa(unusedDeps)+" unused deps")
+	}
+	check.Summary = strings.Join(parts, " · ") + " in new code"
+
+	check.Status = domain.StatusWarning
+	if unusedFiles > 5 || unusedExports > 20 {
+		check.Status = domain.StatusFailed
+	}
+}
+
+// recomputeComplexityCheck recomputes the complexity check after new-code
+// filtering.
+func recomputeComplexityCheck(check *domain.CheckResult) {
+	ensureMetrics(check)
+	check.Metrics["violations"] = float64(len(check.Issues))
+
+	if len(check.Issues) == 0 {
+		check.Status = domain.StatusPassed
+		check.Summary = "0 complexity violations in new code"
+		return
+	}
+	check.Status = domain.StatusWarning
+	if len(check.Issues) > 5 {
+		check.Status = domain.StatusFailed
+	}
+	check.Summary = fmt.Sprintf("%d complexity violations in new code", len(check.Issues))
 }
 
 func recomputeCustomRulesCheck(check *domain.CheckResult) {
@@ -915,10 +1016,11 @@ func color(text string, codes ...string) string {
 	return result + text + reset
 }
 
-// applyBaselineComparison compares current metrics against the last saved run.
-// It annotates check results with regression info and downgrades coverage/complexity
-// from "failed" to "warning" when values haven't regressed (legacy debt tolerance).
-func applyBaselineComparison(analysis *domain.AnalysisResult, projectDir string, opts options) {
+// applyBaselineComparison compares current metrics against the last saved run
+// of the same branch+mode pair. It annotates check results with regression
+// info. The failed→warning downgrade (legacy debt tolerance) only happens when
+// explicitly opted in via baseline.legacy-debt-tolerance: true.
+func applyBaselineComparison(analysis *domain.AnalysisResult, projectDir string, opts options, cfg *config.Config) {
 	if _, err := os.Stat(filepath.Join(projectDir, ".qualitygate", "history.db")); err != nil {
 		return
 	}
@@ -929,7 +1031,12 @@ func applyBaselineComparison(analysis *domain.AnalysisResult, projectDir string,
 	}
 	defer s.Close()
 
-	baseline, err := s.GetLastMetrics(projectDir)
+	mode := "overall"
+	if opts.newCode {
+		mode = "new-code"
+	}
+
+	baseline, err := s.GetLastMetrics(projectDir, opts.branch, mode)
 	if err != nil || len(baseline) == 0 {
 		return // No baseline yet — first run
 	}
@@ -943,7 +1050,12 @@ func applyBaselineComparison(analysis *domain.AnalysisResult, projectDir string,
 		switch check.ID {
 		case "coverage":
 			prevLines := baseline["coverage_lines"]
-			currLines := check.Metrics["lines"]
+			currLines, ok := check.Metrics["lines"]
+			if !ok {
+				// No current coverage data (e.g. new-code mode dropped it) —
+				// never compare against a baseline.
+				continue
+			}
 
 			if prevLines > 0 {
 				delta := currLines - prevLines
@@ -954,7 +1066,7 @@ func applyBaselineComparison(analysis *domain.AnalysisResult, projectDir string,
 					// Coverage dropped by more than 1% — regression
 					check.Details = append(check.Details, "",
 						fmt.Sprintf("REGRESSION: coverage dropped %.1f%% → %.1f%% (Δ%.1f%%)", prevLines, currLines, delta))
-				} else if check.Status == domain.StatusFailed {
+				} else if check.Status == domain.StatusFailed && cfg.Baseline.LegacyDebtTolerance {
 					// Coverage didn't regress — downgrade from failed to warning (legacy debt)
 					check.Status = domain.StatusWarning
 					check.Details = append(check.Details, "",
@@ -963,22 +1075,25 @@ func applyBaselineComparison(analysis *domain.AnalysisResult, projectDir string,
 			}
 
 		case "complexity":
-			prevViolations := baseline["complexity_violations"]
+			// Presence in the baseline map is the source of truth — a missing
+			// metric must not read as 0 (which would make the comparison a
+			// tautology and downgrade every failed run).
+			prevViolations, ok := baseline["complexity_violations"]
+			if !ok {
+				continue
+			}
 			currViolations := check.Metrics["violations"]
+			delta := currViolations - prevViolations
+			check.Metrics["baseline_violations"] = prevViolations
+			check.Metrics["delta_violations"] = delta
 
-			if prevViolations >= 0 {
-				delta := currViolations - prevViolations
-				check.Metrics["baseline_violations"] = prevViolations
-				check.Metrics["delta_violations"] = delta
-
-				if delta > 0 {
-					check.Details = append(check.Details, "",
-						fmt.Sprintf("REGRESSION: +%.0f new complexity violations vs baseline", delta))
-				} else if check.Status == domain.StatusFailed && delta <= 0 {
-					check.Status = domain.StatusWarning
-					check.Details = append(check.Details, "",
-						fmt.Sprintf("Baseline: %.0f → %.0f violations (no regression)", prevViolations, currViolations))
-				}
+			if delta > 0 {
+				check.Details = append(check.Details, "",
+					fmt.Sprintf("REGRESSION: +%.0f new complexity violations vs baseline", delta))
+			} else if check.Status == domain.StatusFailed && cfg.Baseline.LegacyDebtTolerance {
+				check.Status = domain.StatusWarning
+				check.Details = append(check.Details, "",
+					fmt.Sprintf("Baseline: %.0f → %.0f violations (no regression)", prevViolations, currViolations))
 			}
 		}
 	}
