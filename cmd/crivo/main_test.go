@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	_ "modernc.org/sqlite"
 
 	"github.com/guilherme11gr/crivo/internal/domain"
 	gitutil "github.com/guilherme11gr/crivo/internal/git"
@@ -177,5 +183,198 @@ func TestApplyBaselineComparison_DoesNotCreateStoreWithoutHistory(t *testing.T) 
 
 	if _, err := os.Stat(filepath.Join(projectDir, ".qualitygate")); !os.IsNotExist(err) {
 		t.Fatalf(".qualitygate existence error = %v, want not exist", err)
+	}
+}
+
+// gitRun runs a git command in dir and returns trimmed stdout, failing the
+// test on error so fixtures stay deterministic.
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestComputeNewCodeScope_DetachedHeadWithOnlyOriginMain reproduces the CI
+// checkout shape: detached HEAD on a feature commit, local "main" deleted,
+// only refs/remotes/origin/main present. The scope must resolve via the
+// origin fallback and contain exactly the feature commit's files.
+func TestComputeNewCodeScope_DetachedHeadWithOnlyOriginMain(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-b", "main")
+	writeFile(t, dir, "base.txt", "base\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "base commit")
+	baseSHA := gitRun(t, dir, "rev-parse", "HEAD")
+
+	gitRun(t, dir, "checkout", "-b", "feature")
+	writeFile(t, dir, "new.txt", "new\n")
+	writeFile(t, dir, "base.txt", "base\nchanged\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "feature commit")
+	featureSHA := gitRun(t, dir, "rev-parse", "HEAD")
+
+	// CI-like state: detached HEAD at the feature SHA, local main deleted,
+	// only refs/remotes/origin/main (pointing at the base commit) remains.
+	gitRun(t, dir, "checkout", "--detach", featureSHA)
+	gitRun(t, dir, "update-ref", "refs/remotes/origin/main", baseSHA)
+	gitRun(t, dir, "update-ref", "-d", "refs/heads/main")
+
+	files, lines, err := gitutil.ComputeNewCodeScope(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatalf("ComputeNewCodeScope() error = %v", err)
+	}
+
+	if len(files) != 2 {
+		t.Fatalf("got %d changed files, want 2: %#v", len(files), files)
+	}
+	paths := map[string]bool{}
+	for _, f := range files {
+		paths[f.Path] = true
+	}
+	if !paths["new.txt"] || !paths["base.txt"] {
+		t.Fatalf("changed files = %#v, want new.txt and base.txt", paths)
+	}
+
+	foundNew := false
+	foundBase := false
+	for _, l := range lines {
+		switch l.File {
+		case "new.txt":
+			foundNew = true
+		case "base.txt":
+			foundBase = true
+		}
+	}
+	if !foundNew || !foundBase {
+		t.Fatalf("changed lines = %#v, want ranges for new.txt and base.txt", lines)
+	}
+}
+
+// TestComputeNewCodeScope_UnresolvableBaseErrors ensures the function fails
+// loudly when neither the base nor origin/<base> exists.
+func TestComputeNewCodeScope_UnresolvableBaseErrors(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-b", "trunk")
+	writeFile(t, dir, "base.txt", "base\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "base commit")
+
+	_, _, err := gitutil.ComputeNewCodeScope(context.Background(), dir, "main")
+	if err == nil {
+		t.Fatal("ComputeNewCodeScope() expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "--new-code: cannot resolve base branch 'main'") {
+		t.Fatalf("error %q does not carry the expected prefix", err.Error())
+	}
+	if !strings.Contains(err.Error(), "origin/main") {
+		t.Fatalf("error %q does not cite origin/main", err.Error())
+	}
+}
+
+// TestComputeNewCodeScope_WorkingTreeMode ensures the legitimate empty-diff
+// case (current branch IS the base, working-tree mode) does not error.
+func TestComputeNewCodeScope_WorkingTreeMode(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-b", "main")
+	writeFile(t, dir, "base.txt", "base\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "base commit")
+
+	files, _, err := gitutil.ComputeNewCodeScope(context.Background(), dir, "main")
+	if err != nil {
+		t.Fatalf("ComputeNewCodeScope() error = %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("got %d changed files, want 0", len(files))
+	}
+}
+
+// TestRunAnalysis_CommitHashPopulatedWithSave verifies the commit hash is
+// captured and persisted when --save is used on a git repo.
+func TestRunAnalysis_CommitHashPopulatedWithSave(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init", "-b", "main")
+	writeFile(t, dir, "base.txt", "base\n")
+	gitRun(t, dir, "add", ".")
+	gitRun(t, dir, "commit", "-m", "base commit")
+	sha := gitRun(t, dir, "rev-parse", "HEAD")
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	exit := runAnalysis(options{command: "run", save: true, jsonOutput: true})
+	if exit != 0 {
+		t.Fatalf("runAnalysis() exit = %d, want 0", exit)
+	}
+
+	db := filepath.Join(dir, ".qualitygate", "history.db")
+	if _, err := os.Stat(db); err != nil {
+		t.Fatalf("history.db not created: %v", err)
+	}
+
+	sqldb, err := sql.Open("sqlite", db)
+	if err != nil {
+		t.Fatalf("open history: %v", err)
+	}
+	defer sqldb.Close()
+	rows, err := sqldb.Query("SELECT commit_hash FROM analyses")
+	if err != nil {
+		t.Fatalf("query history: %v", err)
+	}
+	defer rows.Close()
+	commits := map[string]bool{}
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			t.Fatal(err)
+		}
+		commits[c] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !commits[sha] {
+		t.Fatalf("commit %s not found in history rows %#v", sha, commits)
+	}
+}
+
+// TestRunAnalysis_NonGitRepoDoesNotRequireCommitHash ensures running in a
+// non-git dir succeeds and leaves the commit hash empty (no error path).
+func TestRunAnalysis_NonGitRepoDoesNotRequireCommitHash(t *testing.T) {
+	dir := t.TempDir()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(wd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	if exit := runAnalysis(options{command: "run", save: true, jsonOutput: true}); exit != 0 {
+		t.Fatalf("runAnalysis() exit = %d, want 0", exit)
 	}
 }

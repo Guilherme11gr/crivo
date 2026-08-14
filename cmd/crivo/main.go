@@ -221,6 +221,7 @@ func runAnalysis(opts options) int {
 	commit := ""
 	if gitutil.IsGitRepo(projectDir) {
 		branch, _ = gitutil.CurrentBranch(ctx, projectDir)
+		commit, _ = gitutil.CurrentCommit(ctx, projectDir)
 		if opts.branch != "" {
 			branch = opts.branch
 		}
@@ -245,22 +246,12 @@ func runAnalysis(opts options) int {
 	var changedLines []gitutil.ChangedLine
 	changedFileSet := map[string]bool{}
 	if opts.newCode && gitutil.IsGitRepo(projectDir) {
-		baseBranch := gitutil.DefaultBranch(ctx, projectDir)
-		if opts.branch != "" {
-			baseBranch = opts.branch
+		var err error
+		changedFiles, changedLines, err = gitutil.ComputeNewCodeScope(ctx, projectDir, opts.branch)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %s\n", err)
+			return 1
 		}
-
-		currentBranch, _ := gitutil.CurrentBranch(ctx, projectDir)
-
-		diffRef := baseBranch
-		headRef := "HEAD"
-		if currentBranch == baseBranch {
-			diffRef = "HEAD"
-			headRef = ""
-		}
-
-		changedFiles, _ = gitutil.GetChangedFiles(ctx, projectDir, diffRef, headRef)
-		changedLines, _ = gitutil.GetChangedLines(ctx, projectDir, diffRef, headRef)
 		for _, f := range changedFiles {
 			changedFileSet[f.Path] = true
 		}
@@ -302,16 +293,16 @@ func runAnalysis(opts options) int {
 		Timestamp:     time.Now(),
 	}
 
-	// If --new-code, filter issues to only changed files/lines
+	// If --new-code, filter issues to only changed files/lines. With a
+	// non-empty scope (guaranteed by ComputeNewCodeScope) the filter always
+	// runs, so a gate never silently analyzes the whole repo as "new code".
 	if opts.newCode && gitutil.IsGitRepo(projectDir) {
-		if len(changedFileSet) > 0 {
-			for i := range analysis.Checks {
-				filterCheckToNewCode(&analysis.Checks[i], changedFileSet, changedLines)
-			}
+		for i := range analysis.Checks {
+			filterCheckToNewCode(&analysis.Checks[i], changedFileSet, changedLines)
+		}
 
-			if !opts.jsonOutput && !opts.tuiMode {
-				fmt.Println(color(fmt.Sprintf("  📝 New code: %d changed files", len(changedFileSet)), dim))
-			}
+		if !opts.jsonOutput && !opts.tuiMode {
+			fmt.Println(color(fmt.Sprintf("  📝 New code: %d changed files", len(changedFileSet)), dim))
 		}
 	}
 

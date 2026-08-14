@@ -6,7 +6,7 @@ Local quality gate for AI-agent coding workflows and CI. Single Go binary that o
 
 ```bash
 go build -o crivo.exe ./cmd/crivo/  # Build
-go test ./internal/...               # Run tests
+go test ./...                        # Run tests
 go vet ./...                         # Lint
 
 crivo run                            # Run the full gate (default)
