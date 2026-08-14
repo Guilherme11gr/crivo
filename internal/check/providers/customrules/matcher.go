@@ -415,16 +415,84 @@ func buildSemgrepBatchConfig(rules []CompiledRule) (string, error) {
 	return tmpFile.Name(), nil
 }
 
-// validateSemgrepFixture runs one semgrep rule against a single fixture file and
+// semgrepLangExts maps a rule's language to the file extension semgrep needs
+// to classify a target. Unknown languages fall back to .txt (the fixture will
+// simply not validate and surfaces as a warning, never a false error).
+var semgrepLangExts = map[string]string{
+	"ts": ".ts", "typescript": ".ts",
+	"tsx": ".tsx",
+	"js": ".js", "javascript": ".js",
+	"jsx": ".jsx",
+	"go": ".go", "golang": ".go",
+	"py": ".py", "python": ".py",
+	"java": ".java",
+	"rb": ".rb", "ruby": ".rb",
+	"json": ".json",
+	"yaml": ".yaml", "yml": ".yml",
+	"html": ".html",
+	"css": ".css",
+}
+
+// semgrepFixtureExt returns the temp-file extension for validating a fixture
+// of a rule with the given language.
+func semgrepFixtureExt(language string) string {
+	if ext, ok := semgrepLangExts[strings.ToLower(strings.TrimSpace(language))]; ok {
+		return ext
+	}
+	return ".txt"
+}
+
+// validateSemgrepFixture runs one semgrep rule against the fixture code and
 // reports whether the rule fired. It returns (fired, validated): validated=false
-// when the binary is unavailable (mirrors the runtime skip, plan 002) or the
-// subprocess failed — the caller must surface that as a warning, never an error.
+// when the binary is unavailable (mirrors the runtime skip, plan 002) or every
+// subprocess attempt failed — the caller must surface that as a warning, never
+// an error.
+//
+// TypeScript fixtures run against BOTH .ts and .tsx files: semgrep's `ts`
+// language covers both, but JSX syntax only parses as .tsx and type-assertion
+// syntax (`<T>x`) only parses as .ts — a hit in either counts as a match.
 func validateSemgrepFixture(rule CompiledRule, code string) (bool, bool) {
 	if !isSemgrepAvailable() {
 		return false, false
 	}
 
-	tmpFile, err := os.CreateTemp("", "crivo-semgrep-fixture-*")
+	configPath, err := buildSemgrepBatchConfig([]CompiledRule{rule})
+	if err != nil {
+		return false, false
+	}
+	defer os.Remove(configPath)
+
+	firedAny := false
+	validatedAny := false
+	for _, ext := range semgrepFixtureExts(rule.Raw.Language) {
+		fired, validated := runSemgrepOnFixture(rule, configPath, code, ext)
+		if validated {
+			validatedAny = true
+			if fired {
+				firedAny = true
+			}
+		}
+	}
+	return firedAny, validatedAny
+}
+
+// semgrepFixtureExts returns the temp-file extensions to try for a language.
+func semgrepFixtureExts(language string) []string {
+	lang := strings.ToLower(strings.TrimSpace(language))
+	switch lang {
+	case "ts", "typescript":
+		return []string{".ts", ".tsx"}
+	}
+	return []string{semgrepFixtureExt(language)}
+}
+
+// runSemgrepOnFixture writes the fixture code to a temp file with the given
+// extension and runs one semgrep invocation for the rule's config. The temp
+// file MUST carry the language's extension: semgrep filters targets by language
+// and skips files it cannot classify, so an extensionless (or wrong-dialect)
+// fixture silently matches nothing.
+func runSemgrepOnFixture(rule CompiledRule, configPath, code, ext string) (bool, bool) {
+	tmpFile, err := os.CreateTemp("", "crivo-semgrep-fixture-*"+ext)
 	if err != nil {
 		return false, false
 	}
@@ -435,12 +503,6 @@ func validateSemgrepFixture(rule CompiledRule, code string) (bool, bool) {
 		return false, false
 	}
 	tmpFile.Close()
-
-	configPath, err := buildSemgrepBatchConfig([]CompiledRule{rule})
-	if err != nil {
-		return false, false
-	}
-	defer os.Remove(configPath)
 
 	cmd := exec.Command(findSemgrepBin(), "scan", "--json", "--quiet", "--config", configPath, path)
 	var stdout, stderr bytes.Buffer
@@ -459,11 +521,39 @@ func validateSemgrepFixture(rule CompiledRule, code string) (bool, bool) {
 	}
 
 	for _, r := range result.Results {
-		if r.CheckID == rule.Raw.ID {
+		if checkIDMatchesRule(r.CheckID, rule.Raw.ID) {
 			return true, true
 		}
 	}
 	return false, true
+}
+
+// checkIDMatchesRule reports whether a semgrep check_id belongs to the given
+// rule. semgrep namespaces rule ids with the config file's location (a config
+// at /tmp/crivo-semgrep-123.yaml reports "tmp.<rule-id>"), so an exact match
+// OR a last-segment match both identify the rule.
+func checkIDMatchesRule(checkID, ruleID string) bool {
+	if checkID == ruleID {
+		return true
+	}
+	if idx := strings.LastIndex(checkID, "."); idx >= 0 && idx+1 < len(checkID) {
+		return checkID[idx+1:] == ruleID
+	}
+	return false
+}
+
+// lookupRuleByCheckID resolves a (possibly namespaced) semgrep check_id back
+// to its rule — see checkIDMatchesRule.
+func lookupRuleByCheckID(ruleByID map[string]CompiledRule, checkID string) (CompiledRule, bool) {
+	if rule, ok := ruleByID[checkID]; ok {
+		return rule, true
+	}
+	if idx := strings.LastIndex(checkID, "."); idx >= 0 && idx+1 < len(checkID) {
+		if rule, ok := ruleByID[checkID[idx+1:]]; ok {
+			return rule, true
+		}
+	}
+	return CompiledRule{}, false
 }
 
 // matchSemgrepBatch runs semgrep once with multiple rules batched into a single config file.
@@ -562,7 +652,7 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 		}
 
 		for _, r := range result.Results {
-			rule, ok := ruleByID[r.CheckID]
+			rule, ok := lookupRuleByCheckID(ruleByID, r.CheckID)
 			if !ok {
 				continue
 			}

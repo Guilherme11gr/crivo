@@ -37,8 +37,8 @@ custom-rules:
 
   - id: no-dangerouslysetinnerhtml
     type: semgrep
-    pattern: "dangerouslySetInnerHTML={{ $HTML }}"
-    language: tsx
+    pattern: "<$EL dangerouslySetInnerHTML={ $X } />"
+    language: ts
     files: "src/**/*.{ts,tsx}"
     message: "dangerouslySetInnerHTML is an XSS risk. Use DOMPurify or React components."
     severity: blocker
