@@ -3,6 +3,8 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -44,26 +46,100 @@ func CurrentBranch(ctx context.Context, projectDir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// DefaultBranch returns the default branch (main or master)
-func DefaultBranch(ctx context.Context, projectDir string) string {
-	// Try to detect from remote
+// DefaultBranch returns the default branch (main or master), verifying any
+// name before returning it. It never returns an unverifiable ref: when no
+// default can be resolved, it returns an error instead of guessing.
+func DefaultBranch(ctx context.Context, projectDir string) (string, error) {
+	// Try to detect from remote HEAD
 	cmd := exec.CommandContext(ctx, "git", "symbolic-ref", "refs/remotes/origin/HEAD")
 	cmd.Dir = projectDir
-	out, err := cmd.Output()
-	if err == nil {
-		ref := strings.TrimSpace(string(out))
-		parts := strings.Split(ref, "/")
-		return parts[len(parts)-1]
+	if out, err := cmd.Output(); err == nil {
+		if name := branchFromRef(strings.TrimSpace(string(out))); name != "" && name != "HEAD" {
+			return name, nil
+		}
 	}
 
-	// Fallback: check if main exists, otherwise master
+	// Fallback: check if main exists locally
 	cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "main")
 	cmd.Dir = projectDir
 	if err := cmd.Run(); err == nil {
-		return "main"
+		return "main", nil
 	}
 
-	return "master"
+	// Never return an unverified name: only return "master" if it resolves.
+	cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "origin/master")
+	cmd.Dir = projectDir
+	if err := cmd.Run(); err == nil {
+		return "master", nil
+	}
+
+	// Last resort: resolve origin/HEAD directly (some clones set the ref
+	// without a symbolic link).
+	cmd = exec.CommandContext(ctx, "git", "rev-parse", "--verify", "refs/remotes/origin/HEAD")
+	cmd.Dir = projectDir
+	if out, err := cmd.Output(); err == nil {
+		if name := branchFromRef(strings.TrimSpace(string(out))); name != "" && name != "HEAD" {
+			return name, nil
+		}
+	}
+
+	return "", errors.New("cannot determine default branch (no origin/HEAD, main, or origin/master found)")
+}
+
+// ResolveBaseRef resolves the base ref name to a ref that verifiably exists,
+// trying <base> first and falling back to origin/<base>. This mirrors CI
+// checkouts (pull_request) where HEAD is detached and only remote refs exist,
+// so "main" must resolve to "origin/main". When neither ref exists it returns
+// an error citing both candidates and the truncated git stderr.
+func ResolveBaseRef(ctx context.Context, projectDir, base string) (string, error) {
+	if base == "" {
+		return "", errors.New("empty base ref")
+	}
+
+	var lastErr string
+	for _, ref := range []string{base, "origin/" + base} {
+		cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", ref)
+		cmd.Dir = projectDir
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			return ref, nil
+		}
+		lastErr = truncateStderr(string(out))
+	}
+
+	return "", fmt.Errorf("cannot resolve git refs '%s' and 'origin/%s': %s", base, base, lastErr)
+}
+
+// CurrentCommit returns the full SHA of HEAD, or an error when not in a git
+// repo.
+func CurrentCommit(ctx context.Context, projectDir string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "HEAD")
+	cmd.Dir = projectDir
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// branchFromRef extracts the branch name from a ref path like
+// "refs/remotes/origin/main".
+func branchFromRef(ref string) string {
+	parts := strings.Split(ref, "/")
+	if len(parts) == 0 {
+		return ""
+	}
+	return parts[len(parts)-1]
+}
+
+// truncateStderr caps git stderr output at ~200 chars so error messages stay
+// readable and do not leak full command output.
+func truncateStderr(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 200 {
+		return s[:200] + "..."
+	}
+	return s
 }
 
 // GetChangedFiles returns files changed between base and head
