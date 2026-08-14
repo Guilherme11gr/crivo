@@ -15,6 +15,82 @@ import (
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
 
+// ─── Embedded pack (plan 008 spike) ─────────────────────────────────────────
+
+func TestProvider_Analyze_EmbeddedPackCompiles(t *testing.T) {
+	// The security-ts pack must load through config.Load (include: pack:...) and
+	// compile cleanly — its semgrep fixtures are unvalidated warnings without the
+	// binary, never errors.
+	dir := t.TempDir()
+	writeFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "pack:security-ts"
+`)
+	t.Setenv("PATH", "/nonexistent-bin")
+	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+
+	cfg, _, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	if len(cfg.CustomRules) != 3 {
+		t.Fatalf("expected 3 pack rules, got %d", len(cfg.CustomRules))
+	}
+
+	compiled, errs, warnings := CompileRules(cfg.CustomRules)
+	if len(errs) > 0 {
+		t.Fatalf("pack rules must compile, got %d errors: %v", len(errs), errs)
+	}
+	if len(compiled) != 3 {
+		t.Fatalf("expected 3 compiled rules, got %d", len(compiled))
+	}
+	// All three pack rules are semgrep rules with fixtures: without the binary
+	// each must produce a NOT-validated warning.
+	if len(warnings) != 3 {
+		t.Fatalf("expected 3 fixture warnings (one per semgrep rule), got %d: %#v", len(warnings), warnings)
+	}
+}
+
+func TestProvider_Analyze_IncludeDuplicateIDFailsCompile(t *testing.T) {
+	// A pack rule colliding with a local rule ID must fail compilation with a
+	// duplicate-id error — the pack flows through the same CompileRules path.
+	dir := t.TempDir()
+	writeFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "pack:security-ts"
+custom-rules:
+  - id: no-eval
+    type: ban-pattern
+    pattern: "eval\\("
+    message: "No eval"
+`)
+	t.Setenv("PATH", "/nonexistent-bin")
+	t.Setenv("CRIVO_NO_AUTO_INSTALL", "1")
+
+	cfg, _, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+
+	p := New()
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusError {
+		t.Fatalf("expected error status for duplicate rule id, got %s", result.Status)
+	}
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "duplicate id") && strings.Contains(d, "no-eval") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a duplicate-id detail naming the rule, got %#v", result.Details)
+	}
+}
+
 // ─── Rule Compilation ───────────────────────────────────────────────────────
 
 // ─── Test Fixtures (plan 008) ────────────────────────────────────────────────

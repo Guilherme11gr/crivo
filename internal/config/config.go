@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/guilherme11gr/crivo/internal/packs"
 	"gopkg.in/yaml.v3"
 )
 
@@ -286,7 +287,65 @@ func Load(projectDir string) (*Config, string, error) {
 		return final, finalPath, fmt.Errorf("%s", msg)
 	}
 
+	// Resolve include: entries (relative rule files and embedded packs) after
+	// the profile overlay so included rules always win over profile defaults.
+	// A missing include is a hard error: silently dropping rules would make the
+	// gate report green without the rules the author asked for.
+	if err := resolveIncludes(final, projectDir); err != nil {
+		return final, finalPath, err
+	}
+
 	return final, finalPath, nil
+}
+
+// resolveIncludes appends rules from include: entries to cfg.CustomRules.
+// Relative paths are read as YAML rule files (resolved against projectDir);
+// "pack:<name>" entries load an embedded pack shipped with the binary.
+// Duplicate rule IDs are not checked here — CompileRules already rejects them.
+func resolveIncludes(cfg *Config, projectDir string) error {
+	for _, inc := range cfg.Include {
+		switch {
+		case strings.HasPrefix(inc, "pack:"):
+			name := strings.TrimPrefix(inc, "pack:")
+			if name == "" {
+				return fmt.Errorf("include: empty pack name in %q", inc)
+			}
+			data, err := packs.Load(name)
+			if err != nil {
+				return fmt.Errorf("include %q: %w", inc, err)
+			}
+			if err := appendRulesFromYAML(cfg, data, inc); err != nil {
+				return err
+			}
+		default:
+			path := inc
+			if !filepath.IsAbs(path) {
+				path = filepath.Join(projectDir, inc)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return fmt.Errorf("include %q: %w", inc, err)
+			}
+			if err := appendRulesFromYAML(cfg, data, inc); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// appendRulesFromYAML parses a rules-only YAML document (custom-rules: [...])
+// and appends the rules to cfg.CustomRules. Unknown keys are tolerated so a
+// rule file can carry future fields without breaking older binaries.
+func appendRulesFromYAML(cfg *Config, data []byte, source string) error {
+	var doc struct {
+		CustomRules []CustomRule `yaml:"custom-rules"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("include %q: %w", source, err)
+	}
+	cfg.CustomRules = append(cfg.CustomRules, doc.CustomRules...)
+	return nil
 }
 
 // validateCoverageNewCode rejects unknown coverage.new-code modes.

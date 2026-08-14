@@ -288,3 +288,139 @@ custom-rules:
 		t.Errorf("expected no test specs, got %d", len(cfg.CustomRules[0].Tests))
 	}
 }
+
+// ─── Include: packs and rule files (plan 008 spike) ─────────────────────────
+
+func TestLoad_IncludeRelativeRuleFile(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "./rules/security.yaml"
+custom-rules:
+  - id: local-rule
+    type: ban-pattern
+    pattern: "TODO"
+    message: "No TODOs"
+`)
+	writeConfigFile(t, dir, "rules/security.yaml", `
+custom-rules:
+  - id: no-eval
+    type: ban-pattern
+    pattern: "eval\\("
+    message: "No eval"
+`)
+
+	cfg, _, err := Load(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.CustomRules) != 2 {
+		t.Fatalf("expected 2 rules (1 local + 1 included), got %d", len(cfg.CustomRules))
+	}
+	ids := map[string]bool{}
+	for _, r := range cfg.CustomRules {
+		ids[r.ID] = true
+	}
+	if !ids["local-rule"] || !ids["no-eval"] {
+		t.Errorf("expected both local and included rules, got %v", ids)
+	}
+}
+
+func TestLoad_IncludeEmbeddedPack(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "pack:security-ts"
+`)
+
+	cfg, _, err := Load(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(cfg.CustomRules) != 3 {
+		t.Fatalf("expected 3 rules from the security-ts pack, got %d", len(cfg.CustomRules))
+	}
+	ids := map[string]bool{}
+	for _, r := range cfg.CustomRules {
+		ids[r.ID] = true
+	}
+	for _, want := range []string{"no-eval", "no-innerhtml", "no-dangerouslysetinnerhtml"} {
+		if !ids[want] {
+			t.Errorf("pack should include rule %q, got %v", want, ids)
+		}
+	}
+	// The pack rules ship with fixtures.
+	for _, r := range cfg.CustomRules {
+		if len(r.Tests) == 0 {
+			t.Errorf("pack rule %q should carry fixtures", r.ID)
+		}
+	}
+}
+
+func TestLoad_IncludeUnknownPackIsError(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "pack:does-not-exist"
+`)
+
+	_, _, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected an error for an unknown pack")
+	}
+	if !strings.Contains(err.Error(), "does-not-exist") {
+		t.Errorf("error should name the pack, got %q", err)
+	}
+}
+
+func TestLoad_IncludeMissingFileIsError(t *testing.T) {
+	dir := t.TempDir()
+	writeConfigFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "./rules/missing.yaml"
+`)
+
+	_, _, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected an error for a missing include file")
+	}
+	if !strings.Contains(err.Error(), "missing.yaml") {
+		t.Errorf("error should name the missing file, got %q", err)
+	}
+}
+
+func TestLoad_IncludeDuplicateIDRejectedByCompile(t *testing.T) {
+	// Duplicate IDs between a pack and local rules are not a load error: the
+	// custom-rules provider's CompileRules already rejects duplicates, and the
+	// pack rules flow through the same path.
+	dir := t.TempDir()
+	writeConfigFile(t, dir, ".qualitygate.yaml", `
+include:
+  - "pack:security-ts"
+custom-rules:
+  - id: no-eval
+    type: ban-pattern
+    pattern: "eval\\("
+    message: "No eval"
+`)
+
+	cfg, _, err := Load(dir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// 3 pack rules + 1 local duplicate = 4; CompileRules must flag the dup.
+	if len(cfg.CustomRules) != 4 {
+		t.Fatalf("expected 4 rules, got %d", len(cfg.CustomRules))
+	}
+}
+
+func writeConfigFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+}

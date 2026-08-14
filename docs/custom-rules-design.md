@@ -145,6 +145,56 @@ custom-rules:
 
 ---
 
+### Fixtures de regra (`tests`)
+
+Toda regra pode carregar fixtures que são validadas **na compilação** — antes da
+regra virar gate, o autor sabe se ela casa o que deveria casar:
+
+```yaml
+custom-rules:
+  - id: no-eval
+    type: ban-pattern
+    pattern: "\\beval\\s*\\("
+    message: "eval() é risco de segurança"
+    severity: blocker
+    tests:
+      - code: "const x = eval(userInput)"     # deve casar (match: true é default)
+        match: true
+      - code: "const x = evaluate(userInput)" # não deve casar
+        match: false
+```
+
+- `match: true` (default) = a regra DEVE disparar no `code`; `match: false` = NÃO deve.
+- Fixture que discorda do matcher ⇒ **erro de compilação** citando a regra, o caso
+  e o código — o `crivo run` falha com `StatusError` e o autor corrige na hora.
+- Tipos validados em memória: `ban-pattern`, `ban-import`, `require-import`,
+  `enforce-pattern`, `max-lines`.
+- `semgrep`: fixtures são validadas **apenas se o binário estiver disponível**;
+  sem binário ⇒ warning colecionado (não erro), coerente com o skip em runtime.
+- `ban-dependency`: fixtures não se aplicam (a regra casa `package.json`, não
+  código) — warning colecionado.
+
+### Packs de regras (`include`)
+
+Regras reutilizáveis são empacotadas e versionadas **com o binário** (embedded):
+
+```yaml
+include:
+  - "pack:security-ts"          # pack embutido no crivo
+  - "./rules/team.yaml"         # arquivo YAML relativo ao projeto
+```
+
+- `pack:<name>` resolve um pack embedded (`internal/packs/<name>.yaml`); hoje
+  existe `security-ts` (no-eval, no-innerhtml, no-dangerouslysetinnerhtml, com
+  fixtures). Bump de pack = release do crivo; registry remota é decisão futura.
+- Caminho relativo lê um YAML de regras (`custom-rules: [...]`) e concatena em
+  `custom-rules`. Include ausente/desconhecido ⇒ erro duro (regra que o autor
+  pediu não pode sumir em silêncio).
+- IDs duplicados entre pack e regras locais ⇒ erro de compilação (mesmo caminho
+  do `CompileRules`).
+
+---
+
 ### Implementação no Go
 
 ```
