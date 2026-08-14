@@ -3,6 +3,7 @@
 
 const https = require("https");
 const http = require("http");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
@@ -42,9 +43,57 @@ function getBinaryName(platform) {
   return platform === "windows" ? "crivo.exe" : "crivo";
 }
 
-function getDownloadUrl(platform, arch) {
+function getDownloadUrl(platform, arch, baseUrl) {
   const ext = platform === "windows" ? ".zip" : ".tar.gz";
-  return `https://github.com/${REPO}/releases/download/v${VERSION}/crivo_${platform}_${arch}${ext}`;
+  const base = baseUrl ?? `https://github.com/${REPO}/releases/download/v${VERSION}`;
+  return `${base}/crivo_${platform}_${arch}${ext}`;
+}
+
+function getChecksumsUrl(baseUrl) {
+  const base = baseUrl ?? `https://github.com/${REPO}/releases/download/v${VERSION}`;
+  return `${base}/checksums.txt`;
+}
+
+function getAssetName(platform, arch) {
+  const ext = platform === "windows" ? ".zip" : ".tar.gz";
+  return `crivo_${platform}_${arch}${ext}`;
+}
+
+// Returns the sha256 hex digest of the given buffer.
+function sha256Hex(buffer) {
+  return crypto.createHash("sha256").update(buffer).digest("hex");
+}
+
+// Verifies `buffer` against the release's checksums.txt. The checksums file is
+// published by GoReleaser alongside the release assets and lists every asset as
+// "<sha256>  <asset-name>". A missing line for the asset or a hash mismatch is a
+// hard error (code "ECHECKSUM") — the binary is never installed in that case.
+async function verifyChecksum(buffer, platform, arch, baseUrl) {
+  const assetName = getAssetName(platform, arch);
+  const checksumsText = await fetch(getChecksumsUrl(baseUrl));
+  const expected = checksumsText
+    .toString("utf8")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.endsWith(`  ${assetName}`) || line.endsWith(` ${assetName}`));
+
+  if (!expected) {
+    const error = new Error(
+      `Checksum verification failed: no entry for ${assetName} in checksums.txt of release v${VERSION}`
+    );
+    error.code = "ECHECKSUM";
+    throw error;
+  }
+
+  const expectedHash = expected.split(/\s+/)[0];
+  const actualHash = sha256Hex(buffer);
+  if (expectedHash !== actualHash) {
+    const error = new Error(
+      `Checksum verification failed for ${assetName}: expected ${expectedHash}, got ${actualHash}`
+    );
+    error.code = "ECHECKSUM";
+    throw error;
+  }
 }
 
 function fetch(url, options = {}) {
@@ -163,10 +212,10 @@ async function tryGoInstall() {
   return false;
 }
 
-async function ensureBinary() {
+async function ensureBinary(options = {}) {
   const { platform, arch } = getPlatform();
   const binaryName = getBinaryName(platform);
-  const binDir = path.join(__dirname, "bin");
+  const binDir = options.binDir ?? path.join(__dirname, "bin");
   const destPath = path.join(binDir, binaryName);
 
   // Skip if binary already exists
@@ -176,11 +225,12 @@ async function ensureBinary() {
 
   fs.mkdirSync(binDir, { recursive: true });
 
-  const url = getDownloadUrl(platform, arch);
+  const url = getDownloadUrl(platform, arch, options.baseUrl);
   console.log(`  Downloading crivo v${VERSION} for ${platform}/${arch}...`);
 
   try {
     const buffer = await fetch(url);
+    await verifyChecksum(buffer, platform, arch, options.baseUrl);
 
     if (platform === "windows") {
       await extractZip(buffer, binDir, binaryName);
@@ -192,6 +242,12 @@ async function ensureBinary() {
     console.log(`  Installed crivo to ${destPath}`);
     return destPath;
   } catch (err) {
+    // A checksum mismatch or a missing checksums entry is a hard failure:
+    // never install a binary whose integrity could not be verified.
+    if (err.code === "ECHECKSUM") {
+      throw err;
+    }
+
     console.warn(`  GitHub release not found: ${err.message}`);
 
     if (await tryGoInstall()) {
@@ -225,6 +281,10 @@ module.exports = {
   MAX_REDIRECTS,
   ensureBinary,
   fetch,
+  getAssetName,
+  getChecksumsUrl,
   getDownloadUrl,
   getPlatform,
+  sha256Hex,
+  verifyChecksum,
 };
