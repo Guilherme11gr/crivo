@@ -222,6 +222,8 @@ func isCheckEnabled(id string, cfg *config.Config, disabledChecks map[string]boo
 		return cfg.Checks.DeadCode
 	case "custom-rules":
 		return cfg.Checks.CustomRules
+	case "complexity":
+		return cfg.Checks.Complexity
 	default:
 		return true
 	}
