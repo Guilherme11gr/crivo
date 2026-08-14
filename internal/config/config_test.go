@@ -19,6 +19,10 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Coverage.Lines != 60 {
 		t.Errorf("Coverage.Lines = %f, want 60", cfg.Coverage.Lines)
 	}
+	// coverage.new-code defaults to "off": PR mode skips the expensive suite
+	if cfg.Coverage.NewCode != string(CoverageNewCodeOff) {
+		t.Errorf("Coverage.NewCode = %q, want %q", cfg.Coverage.NewCode, CoverageNewCodeOff)
+	}
 }
 
 func TestLoad_NoConfig(t *testing.T) {
@@ -73,6 +77,7 @@ func TestLoad_YAMLConfigOverrides(t *testing.T) {
 profile: balanced
 coverage:
   lines: 75
+  new-code: related
 checks:
   semgrep: true
 `
@@ -89,8 +94,53 @@ checks:
 	if cfg.Coverage.Lines != 75 {
 		t.Errorf("Coverage.Lines = %f, want 75", cfg.Coverage.Lines)
 	}
+	if cfg.Coverage.NewCode != "related" {
+		t.Errorf("Coverage.NewCode = %q, want related", cfg.Coverage.NewCode)
+	}
 	if cfg.Checks.Semgrep != true {
 		t.Error("Semgrep should be true after override")
+	}
+}
+
+func TestLoad_CoverageNewCodeInvalidValueIsError(t *testing.T) {
+	dir := t.TempDir()
+	configContent := `
+coverage:
+  new-code: sometimes
+`
+	if err := os.WriteFile(filepath.Join(dir, ".qualitygate.yaml"), []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, _, err := Load(dir)
+	if err == nil {
+		t.Fatal("expected a validation error for unknown coverage.new-code value, got nil")
+	}
+	if cfg == nil {
+		t.Fatal("expected the parsed config alongside the validation error for diagnostics")
+	}
+	if cfg.Coverage.NewCode != "sometimes" {
+		t.Fatalf("Coverage.NewCode = %q, want the invalid value surfaced", cfg.Coverage.NewCode)
+	}
+}
+
+func TestLoad_CoverageNewCodeValidValues(t *testing.T) {
+	for _, mode := range []string{"off", "related", "full"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			configContent := "coverage:\n  new-code: " + mode + "\n"
+			if err := os.WriteFile(filepath.Join(dir, ".qualitygate.yaml"), []byte(configContent), 0644); err != nil {
+				t.Fatal(err)
+			}
+
+			cfg, _, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load() validation error: %v, want nil", err)
+			}
+			if cfg.Coverage.NewCode != mode {
+				t.Errorf("Coverage.NewCode = %q, want %q", cfg.Coverage.NewCode, mode)
+			}
+		})
 	}
 }
 

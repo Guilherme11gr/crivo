@@ -1,12 +1,42 @@
 package complexity
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
 )
+
+// stubNode installs a fake node executable in PATH that emits canned
+// cognitive.js-style JSON on stdout, and records each scanned directory to
+// <dirsFile>. Values vary per scanned dir (matched by basename) so the test
+// can assert aggregation across multiple src dirs.
+func stubNode(t *testing.T, dirsFile string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("node stub uses a POSIX shell script")
+	}
+	binDir := t.TempDir()
+	scriptPath := filepath.Join(binDir, "node")
+	content := `#!/bin/sh
+name=$(basename "$2")
+echo "DIR:$2" >> ` + dirsFile + `
+if [ "$name" = "a" ]; then
+  echo '{"functions":[{"file":"x.ts","name":"fnA","line":1,"complexity":20}],"summary":{"totalFunctions":1,"totalLines":100,"violations":1,"maxComplexity":20,"avgComplexity":20}}'
+else
+  echo '{"functions":[{"file":"y.ts","name":"fnB","line":1,"complexity":3}],"summary":{"totalFunctions":1,"totalLines":50,"violations":0,"maxComplexity":3,"avgComplexity":3}}'
+fi
+`
+	if err := os.WriteFile(scriptPath, []byte(content), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
 
 func TestSeverityForComplexity(t *testing.T) {
 	tests := []struct {
@@ -370,6 +400,94 @@ func TestAnalyzeFileRegex_NonexistentFile(t *testing.T) {
 	}
 	if lines != 0 {
 		t.Errorf("expected 0 lines for nonexistent file, got %d", lines)
+	}
+}
+
+func TestAnalyzeAST_MultiSrcAggregates(t *testing.T) {
+	// Two src dirs (a/, b/) — metrics must be the sum of both runs and the
+	// functions must carry their src prefix.
+	dir := t.TempDir()
+	dirsFile := filepath.Join(dir, "scanned-dirs.txt")
+	stubNode(t, dirsFile)
+
+	if err := os.MkdirAll(filepath.Join(dir, "a"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "b"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// typescript must be resolvable from NODE_PATH
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "typescript"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Src = []string{"a/", "b/"}
+
+	result, err := p.analyzeAST(context.Background(), dir, cfg, 15)
+	if err != nil {
+		t.Fatalf("AnalyzeAST() error = %v", err)
+	}
+
+	// total_lines = 100 + 50 (sum), total_functions = 2 (sum)
+	if result.Metrics["total_lines"] != 150 {
+		t.Errorf("total_lines = %v, want 150 (sum of both src dirs)", result.Metrics["total_lines"])
+	}
+	if result.Metrics["total_functions"] != 2 {
+		t.Errorf("total_functions = %v, want 2 (sum of both src dirs)", result.Metrics["total_functions"])
+	}
+	if result.Metrics["violations"] != 1 {
+		t.Errorf("violations = %v, want 1", result.Metrics["violations"])
+	}
+	if result.Metrics["max_complexity"] != 20 {
+		t.Errorf("max_complexity = %v, want 20", result.Metrics["max_complexity"])
+	}
+
+	// Both dirs must have been scanned exactly once.
+	data, err := os.ReadFile(dirsFile)
+	if err != nil {
+		t.Fatalf("stub did not record scanned dirs: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 cognitive.js invocations, got %d: %q", len(lines), lines)
+	}
+	for _, l := range lines {
+		if !strings.Contains(l, "DIR:") {
+			t.Fatalf("unexpected stub line %q", l)
+		}
+	}
+
+	// Functions carry the src prefix: a/x.ts and b/y.ts.
+	files := map[string]bool{}
+	for _, is := range result.Issues {
+		files[is.File] = true
+	}
+	if !files["a/x.ts"] {
+		t.Errorf("issues %v missing a/x.ts (src prefix must be applied)", result.Issues)
+	}
+	if result.Issues[0].File != "a/x.ts" {
+		t.Errorf("first issue file = %q, want a/x.ts (sorted by complexity)", result.Issues[0].File)
+	}
+}
+
+func TestAnalyzeAST_NoSrcDirsIsError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "typescript"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Src = []string{"missing/"}
+
+	_, err := p.analyzeAST(context.Background(), dir, cfg, 15)
+	if err == nil {
+		t.Fatal("expected error when no configured src dir exists")
+	}
+	if !strings.Contains(err.Error(), "source") {
+		t.Errorf("error = %v, want it to mention source directories", err)
 	}
 }
 

@@ -71,6 +71,30 @@ Alguns providers também recebem esse escopo antes de rodar, para evitar trabalh
 
 Na branch principal, o modo compara `HEAD` com mudanças locais.
 
+### `coverage.new-code`
+
+O check de coverage roda a suíte de testes inteira — o mais caro do pipeline. Em
+modo `--new-code`, o gate só se importa com as linhas alteradas, então rodar a
+suíte completa é custo sem retorno. O campo `coverage.new-code` controla isso:
+
+| Valor | Comportamento em `--new-code` |
+| --- | --- |
+| `off` (default) | Pula a suíte: o check retorna `skipped` com summary explícito. Nenhum custo de execução. |
+| `related` | Roda só os testes relacionados aos arquivos alterados (`vitest related --coverage` / `jest --findRelatedTests ... --coverage`). Use em PR gates que precisam de um número real de cobertura do código novo. |
+| `full` | Roda a suíte inteira (comportamento pré-existente). |
+
+Fora do modo `--new-code`, o campo é ignorado e a suíte sempre roda. Um valor
+inválido é erro de configuração (o run aborta), nunca silêncio.
+
+```yaml
+coverage:
+  lines: 60
+  branches: 50
+  functions: 60
+  statements: 60
+  new-code: off   # off (default) | related | full
+```
+
 ## Gate
 
 As políticas disponíveis são:

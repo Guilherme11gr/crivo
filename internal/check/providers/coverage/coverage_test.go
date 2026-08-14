@@ -6,10 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/guilherme11gr/crivo/internal/check"
 	"github.com/guilherme11gr/crivo/internal/config"
 	"github.com/guilherme11gr/crivo/internal/domain"
+	gitutil "github.com/guilherme11gr/crivo/internal/git"
 )
 
 // stubNpx installs a fake npx executable in PATH that runs the given script
@@ -233,6 +236,186 @@ func TestExtractTestFailures_Empty(t *testing.T) {
 	failures := extractTestFailures("")
 	if len(failures) != 0 {
 		t.Errorf("expected 0 failures for empty output, got %d", len(failures))
+	}
+}
+
+// newCodeCtx returns a context carrying the given changed files as new-code scope.
+func newCodeCtx(t *testing.T, files ...string) context.Context {
+	t.Helper()
+	changed := make([]gitutil.ChangedFile, 0, len(files))
+	for _, f := range files {
+		changed = append(changed, gitutil.ChangedFile{Path: f, Status: "M"})
+	}
+	return check.WithNewCodeScope(context.Background(), check.NewScope(changed, nil))
+}
+
+func TestAnalyze_NewCodeDefaultSkipsSuite(t *testing.T) {
+	// In --new-code mode with the default coverage.new-code=off, the suite must
+	// never run: no npx stub, no package.json — if the provider tried to run
+	// anything it would fail loudly instead of skipping.
+	stubNpx(t, `echo "npx must not run" >&2; exit 99`)
+
+	dir := t.TempDir()
+
+	p := New()
+	cfg := config.DefaultConfig()
+	result, err := p.Analyze(newCodeCtx(t, "src/app.ts"), dir, cfg)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+
+	if result.Status != domain.StatusSkipped {
+		t.Fatalf("status = %s, want skipped (default new-code mode must not run the suite)", result.Status)
+	}
+	if !strings.Contains(result.Summary, "coverage.new-code") {
+		t.Errorf("summary = %q, want it to point at coverage.new-code", result.Summary)
+	}
+}
+
+func TestAnalyze_NewCodeExplicitOffSkips(t *testing.T) {
+	stubNpx(t, `echo "npx must not run" >&2; exit 99`)
+
+	dir := t.TempDir()
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Coverage.NewCode = "off"
+
+	result, err := p.Analyze(newCodeCtx(t, "src/app.ts"), dir, cfg)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if result.Status != domain.StatusSkipped {
+		t.Fatalf("status = %s, want skipped", result.Status)
+	}
+}
+
+func TestAnalyze_NewCodeFullRunsSuite(t *testing.T) {
+	// full behaves like the pre-new-code path: suite runs, summary read.
+	stubNpx(t, `mkdir -p coverage
+cat > coverage/coverage-summary.json <<'EOF'
+{"total":{"lines":{"total":100,"covered":90,"skipped":0,"pct":90.0},"branches":{"total":50,"covered":40,"skipped":0,"pct":80.0},"functions":{"total":20,"covered":18,"skipped":0,"pct":90.0},"statements":{"total":120,"covered":110,"skipped":0,"pct":91.7}}}
+EOF
+`)
+
+	dir := t.TempDir()
+	pkg := `{"devDependencies":{"jest":"^29.0.0"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Coverage.NewCode = "full"
+
+	result, err := p.Analyze(newCodeCtx(t, "src/app.ts"), dir, cfg)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if result.Status != domain.StatusPassed {
+		t.Fatalf("status = %s, want passed (full mode runs the suite)", result.Status)
+	}
+}
+
+func TestAnalyze_NewCodeRelatedNoSourceFilesSkips(t *testing.T) {
+	// Scope contains only non-source files — nothing to run related tests
+	// against, so it degrades to a skip with its own summary.
+	stubNpx(t, `echo "npx must not run" >&2; exit 99`)
+
+	dir := t.TempDir()
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Coverage.NewCode = "related"
+
+	result, err := p.Analyze(newCodeCtx(t, "README.md", "package.json"), dir, cfg)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if result.Status != domain.StatusSkipped {
+		t.Fatalf("status = %s, want skipped", result.Status)
+	}
+	if !strings.Contains(result.Summary, "no source files") {
+		t.Errorf("summary = %q, want the no-source-files message", result.Summary)
+	}
+}
+
+func TestRelatedTestArgs(t *testing.T) {
+	files := []string{"src/a.ts", "src/b.tsx"}
+
+	vitestArgs := relatedTestArgs("vitest", files)
+	wantVitest := []string{"vitest", "related", "--coverage", "src/a.ts", "src/b.tsx"}
+	if strings.Join(vitestArgs, " ") != strings.Join(wantVitest, " ") {
+		t.Errorf("vitest args = %#v, want %#v", vitestArgs, wantVitest)
+	}
+
+	jestArgs := relatedTestArgs("jest", files)
+	wantJest := []string{"jest", "--findRelatedTests", "src/a.ts", "src/b.tsx", "--coverage", "--coverageReporters=json-summary", "--passWithNoTests", "--silent"}
+	if strings.Join(jestArgs, " ") != strings.Join(wantJest, " ") {
+		t.Errorf("jest args = %#v, want %#v", jestArgs, wantJest)
+	}
+}
+
+func TestAnalyze_NewCodeRelatedBuildsArgsViaStub(t *testing.T) {
+	// Capture the argv the provider passes to npx in related mode and verify
+	// the related flags plus the changed source files land on the command line.
+	stubNpx(t, `echo "ARGS:$*" > args.txt
+mkdir -p coverage
+cat > coverage/coverage-summary.json <<'EOF'
+{"total":{"lines":{"total":100,"covered":90,"skipped":0,"pct":90.0},"branches":{"total":50,"covered":40,"skipped":0,"pct":80.0},"functions":{"total":20,"covered":18,"skipped":0,"pct":90.0},"statements":{"total":120,"covered":110,"skipped":0,"pct":91.7}}}
+EOF
+`)
+
+	dir := t.TempDir()
+	pkg := `{"devDependencies":{"jest":"^29.0.0"}}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkg), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Coverage.NewCode = "related"
+
+	result, err := p.Analyze(newCodeCtx(t, "src/app.ts", "src/util.tsx"), dir, cfg)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if result.Status != domain.StatusPassed {
+		t.Fatalf("status = %s, want passed", result.Status)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "args.txt"))
+	if err != nil {
+		t.Fatalf("stub did not capture argv: %v", err)
+	}
+	captured := strings.TrimSpace(string(data))
+	for _, want := range []string{"jest", "--findRelatedTests", "src/app.ts", "src/util.tsx", "--coverage"} {
+		if !strings.Contains(captured, want) {
+			t.Errorf("captured argv %q does not contain %q", captured, want)
+		}
+	}
+}
+
+func TestNewCodeSourceFiles(t *testing.T) {
+	scope := check.NewScope(
+		[]gitutil.ChangedFile{
+			{Path: "src/app.ts", Status: "M"},
+			{Path: "src/util.tsx", Status: "M"},
+			{Path: "src/legacy.js", Status: "M"},
+			{Path: "src/styles.css", Status: "M"},
+			{Path: "README.md", Status: "M"},
+			{Path: "package-lock.json", Status: "M"},
+		},
+		nil,
+	)
+
+	got := newCodeSourceFiles(scope)
+	want := []string{"src/app.ts", "src/legacy.js", "src/util.tsx"}
+	if len(got) != len(want) {
+		t.Fatalf("newCodeSourceFiles() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("newCodeSourceFiles()[%d] = %q, want %q (sorted, source-only)", i, got[i], want[i])
+		}
 	}
 }
 

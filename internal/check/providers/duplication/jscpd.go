@@ -75,25 +75,30 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	}
 	defer os.RemoveAll(reportDir)
 
-	// Determine source directory
-	srcDir := "src/"
-	if len(cfg.Src) > 0 {
-		srcDir = cfg.Src[0]
+	// Collect every configured src dir that exists on disk and pass them all
+	// to jscpd as positional arguments (the CLI accepts multiple paths).
+	srcDirs := cfg.Src
+	if len(srcDirs) == 0 {
+		srcDirs = []string{"src/"}
 	}
-
-	srcPath := filepath.Join(projectDir, srcDir)
-	if _, err := os.Stat(srcPath); err != nil {
+	var srcPaths []string
+	for _, srcDir := range srcDirs {
+		srcPath := filepath.Join(projectDir, srcDir)
+		if _, err := os.Stat(srcPath); err != nil {
+			continue
+		}
+		// Use forward slashes for jscpd compatibility on Windows
+		srcPaths = append(srcPaths, filepath.ToSlash(srcPath))
+	}
+	if len(srcPaths) == 0 {
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),
 			Status:   domain.StatusSkipped,
-			Summary:  fmt.Sprintf("Source directory %q not found", srcDir),
+			Summary:  "Source directories not found",
 			Duration: time.Since(start),
 		}, nil
 	}
-
-	// Use forward slashes for jscpd compatibility on Windows
-	srcPath = filepath.ToSlash(srcPath)
 
 	npxBin := check.FindNpx()
 	if npxBin == "" {
@@ -106,14 +111,13 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		}, nil
 	}
 
-	args := []string{
-		"jscpd",
-		srcPath,
+	args := append([]string{"jscpd"}, srcPaths...)
+	args = append(args,
 		fmt.Sprintf("--min-lines=%d", cfg.Duplication.MinLines),
 		fmt.Sprintf("--min-tokens=%d", cfg.Duplication.MinTokens),
 		"--reporters=json",
-		"--output=" + filepath.ToSlash(reportDir),
-	}
+		"--output="+filepath.ToSlash(reportDir),
+	)
 	args = append(args, jscpdIgnoreArgs(jscpdVersion(ctx, npxBin, projectDir), cfg.Exclude)...)
 
 	cmd := exec.CommandContext(ctx, npxBin, args...)
@@ -179,8 +183,8 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 		if i >= 10 {
 			break
 		}
-		first := normalizePath(projectDir, dup.FirstFile.Name)
-		second := normalizePath(projectDir, dup.SecondFile.Name)
+		first := normalizeReportPath(projectDir, srcPaths, dup.FirstFile.Name)
+		second := normalizeReportPath(projectDir, srcPaths, dup.SecondFile.Name)
 		details = append(details, fmt.Sprintf("%s:%d <-> %s:%d (%d lines)",
 			first, dup.FirstFile.StartLoc.Line,
 			second, dup.SecondFile.StartLoc.Line,
@@ -191,8 +195,8 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 	var issues []domain.Issue
 	for _, dup := range report.Duplicates {
 		// Normalize paths: jscpd may return absolute or relative paths
-		first := normalizePath(projectDir, dup.FirstFile.Name)
-		second := normalizePath(projectDir, dup.SecondFile.Name)
+		first := normalizeReportPath(projectDir, srcPaths, dup.FirstFile.Name)
+		second := normalizeReportPath(projectDir, srcPaths, dup.SecondFile.Name)
 
 		issues = append(issues, domain.Issue{
 			RuleID:      "duplication",
@@ -330,4 +334,37 @@ func normalizePath(projectDir, p string) string {
 		return filepath.ToSlash(filepath.Base(p))
 	}
 	return filepath.ToSlash(rel)
+}
+
+// normalizeReportPath resolves a jscpd finding path to a project-relative path.
+// jscpd reports paths relative to its cwd (the projectDir), but some versions
+// report them relative to the scanned source dir instead — so findings of
+// subpaths would come out without the src prefix. As a fallback, resolve the
+// name against each scanned src path and pick the first that exists on disk.
+func normalizeReportPath(projectDir string, srcPaths []string, name string) string {
+	if name == "" {
+		return ""
+	}
+	if rel := normalizePath(projectDir, name); rel != "" && rel != "." {
+		candidate := filepath.Join(projectDir, rel)
+		if _, err := os.Stat(candidate); err == nil {
+			return rel
+		}
+	}
+	// Try resolving against the scanned src dirs (jscpd may have reported a
+	// path relative to the scanned directory).
+	for _, srcPath := range srcPaths {
+		abs := filepath.Join(srcPath, filepath.FromSlash(name))
+		rel, err := filepath.Rel(projectDir, abs)
+		if err == nil && rel != "" && rel != "." {
+			if _, statErr := os.Stat(abs); statErr == nil {
+				return filepath.ToSlash(rel)
+			}
+		}
+	}
+	// Last resort: plain project-relative normalization.
+	if rel := normalizePath(projectDir, name); rel != "" && rel != "." {
+		return rel
+	}
+	return filepath.ToSlash(filepath.Base(name))
 }

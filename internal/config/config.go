@@ -69,11 +69,30 @@ type ThresholdConfig struct {
 	CodeSmells      int     `yaml:"code-smells" json:"codeSmells"`
 }
 
+// CoverageNewCodeMode controls how the coverage check behaves in --new-code mode.
+//   - "off": skip the coverage suite entirely (default) — the most expensive
+//     check in the pipeline is skipped in PR mode because the suite covers the
+//     whole repo while the gate only cares about changed lines.
+//   - "related": run only the tests related to changed files.
+//   - "full": run the whole suite (pre-new-code behavior).
+type CoverageNewCodeMode string
+
+const (
+	CoverageNewCodeOff     CoverageNewCodeMode = "off"
+	CoverageNewCodeRelated CoverageNewCodeMode = "related"
+	CoverageNewCodeFull    CoverageNewCodeMode = "full"
+)
+
 type CoverageConfig struct {
 	Lines      float64 `yaml:"lines" json:"lines"`
 	Branches   float64 `yaml:"branches" json:"branches"`
 	Functions  float64 `yaml:"functions" json:"functions"`
 	Statements float64 `yaml:"statements" json:"statements"`
+
+	// NewCode selects the coverage strategy in --new-code mode: "off" (default,
+	// skip the suite), "related" (only tests touching changed files) or "full"
+	// (whole suite).
+	NewCode string `yaml:"new-code" json:"newCode"`
 }
 
 type DuplicationConfig struct {
@@ -161,6 +180,7 @@ func DefaultConfig() *Config {
 			Branches:   50,
 			Functions:  60,
 			Statements: 60,
+			NewCode:    string(CoverageNewCodeOff),
 		},
 		Duplication: DuplicationConfig{
 			Threshold:           5,
@@ -182,7 +202,8 @@ func DefaultConfig() *Config {
 // falling back to defaults would make every custom rule and threshold
 // disappear while the gate reports green. All malformed candidates are
 // collected so a broken .qualitygate.yaml is never masked by a valid
-// .qualitygate.yml.
+// .qualitygate.yml. Invalid values (e.g. an unknown coverage.new-code mode)
+// are errors for the same reason — never silent.
 func Load(projectDir string) (*Config, string, error) {
 	cfg := DefaultConfig()
 
@@ -233,11 +254,32 @@ func Load(projectDir string) (*Config, string, error) {
 		return nil, "", fmt.Errorf("config parse error in %s", strings.Join(parseErrs, "; "))
 	}
 
+	final := cfg
+	finalPath := "defaults"
 	if loaded != nil {
-		return loaded, loadedPath, nil
+		final = loaded
+		finalPath = loadedPath
 	}
 
-	return cfg, "defaults", nil
+	// Invalid values are as fatal as malformed YAML: a typo'd enum must never
+	// silently fall back to the default behavior. The parsed config is still
+	// returned alongside the error for diagnostics (it parsed, it is just
+	// invalid) — callers must treat the error as fatal either way.
+	if msg := validateCoverageNewCode(final.Coverage.NewCode); msg != "" {
+		return final, finalPath, fmt.Errorf("%s", msg)
+	}
+
+	return final, finalPath, nil
+}
+
+// validateCoverageNewCode rejects unknown coverage.new-code modes.
+func validateCoverageNewCode(mode string) string {
+	switch CoverageNewCodeMode(mode) {
+	case CoverageNewCodeOff, CoverageNewCodeRelated, CoverageNewCodeFull:
+		return ""
+	default:
+		return fmt.Sprintf("invalid coverage.new-code value %q (want off|related|full)", mode)
+	}
 }
 
 // GenerateDefault returns the default YAML config as bytes
