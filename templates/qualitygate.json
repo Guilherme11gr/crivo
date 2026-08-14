@@ -1,41 +1,77 @@
 {
+  "profile": "balanced",
+  "gate-policy": "release",
+  "languages": ["typescript"],
+  "src": ["src/"],
+  "exclude": ["node_modules/", "dist/", ".next/", "coverage/", "*.min.js"],
   "checks": {
     "typescript": true,
-    "lint": true,
+    "semgrep": false,
     "coverage": true,
-    "duplication": true
+    "duplication": true,
+    "secrets": false,
+    "dead-code": false,
+    "custom-rules": true,
+    "complexity": true
+  },
+  "quality-gate": {
+    "new-code": {
+      "coverage": 80,
+      "bugs": 0,
+      "vulnerabilities": 0,
+      "duplications": 3
+    },
+    "overall": {
+      "coverage": 60,
+      "bugs": 0,
+      "vulnerabilities": 0,
+      "duplications": 5
+    }
+  },
+  "baseline": {
+    "legacy-debt-tolerance": false
   },
   "coverage": {
     "lines": 60,
     "branches": 50,
     "functions": 60,
-    "statements": 60
+    "statements": 60,
+    "new-code": "off"
   },
   "duplication": {
     "threshold": 5,
-    "minLines": 5,
-    "minTokens": 50
+    "min-lines": 5,
+    "min-tokens": 50,
+    "semantic": true,
+    "semantic-min-lines": 5,
+    "similarity-threshold": 0.85
   },
   "complexity": {
-    "cognitive": 15,
-    "cyclomatic": 10
+    "threshold": 15
   },
-  "structural": {
-    "maxLinesPerFunction": 100,
-    "maxParams": 4,
-    "maxDepth": 4,
-    "maxNestedCallbacks": 3
-  },
-  "exclude": [
-    "**/node_modules/**",
-    "**/dist/**",
-    "**/build/**",
-    "**/.next/**"
-  ],
-  "testExclude": [
-    "**/*.test.*",
-    "**/*.spec.*",
-    "**/__tests__/**"
-  ],
-  "srcPattern": "src"
+  "custom-rules": [
+    {
+      "id": "no-eval",
+      "type": "ban-pattern",
+      "pattern": "\\beval\\s*\\(",
+      "message": "eval() is a security risk. Use safer alternatives.",
+      "severity": "blocker",
+      "tests": [
+        { "code": "const x = eval(userInput)", "match": true },
+        { "code": "const x = evaluate(userInput)", "match": false }
+      ]
+    },
+    {
+      "id": "no-innerhtml",
+      "type": "semgrep",
+      "pattern": "$X.innerHTML = $Y",
+      "language": "ts",
+      "files": "src/**/*.{ts,tsx}",
+      "message": "Direct innerHTML assignment is an XSS risk. Use DOMPurify or React.",
+      "severity": "blocker",
+      "tests": [
+        { "code": "el.innerHTML = userInput", "match": true }
+      ]
+    }
+  ]
 }
