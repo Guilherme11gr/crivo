@@ -33,12 +33,17 @@ func WalkFiles(ctx context.Context, projectDir string, fileGlob string, exclude 
 		fileGlob = defaultFileGlob
 	}
 
-	excludeSet := make(map[string]bool, len(defaultExcludeDirs)+len(exclude))
-	for k, v := range defaultExcludeDirs {
-		excludeSet[k] = v
-	}
+	// Directory excludes (entries ending with "/") are matched against the
+	// relative directory path; file excludes (everything else) are globs
+	// matched against the full relative file path.
+	var excludeDirs []string
+	var excludeFileGlobs []string
 	for _, e := range exclude {
-		excludeSet[strings.TrimSuffix(e, "/")] = true
+		if strings.HasSuffix(e, "/") {
+			excludeDirs = append(excludeDirs, strings.TrimSuffix(e, "/"))
+		} else {
+			excludeFileGlobs = append(excludeFileGlobs, e)
+		}
 	}
 
 	var matches []string
@@ -59,9 +64,18 @@ func WalkFiles(ctx context.Context, projectDir string, fileGlob string, exclude 
 		rel = filepath.ToSlash(rel)
 
 		if d.IsDir() {
+			// Hardcoded excludes match the directory basename anywhere in the
+			// tree (node_modules, dist, .next, ...).
 			base := filepath.Base(path)
-			if excludeSet[base] {
+			if defaultExcludeDirs[base] {
 				return filepath.SkipDir
+			}
+			// Configured directory excludes match the relative path: "src/generated/"
+			// excludes src/generated/** but not pkg/generated.
+			for _, dir := range excludeDirs {
+				if rel == dir || strings.HasPrefix(rel, dir+"/") {
+					return filepath.SkipDir
+				}
 			}
 			// Depth guard against symlink loops
 			if strings.Count(rel, "/") > maxDepth {
@@ -82,6 +96,14 @@ func WalkFiles(ctx context.Context, projectDir string, fileGlob string, exclude 
 		}
 		if info.Size() > maxFileSize {
 			return nil
+		}
+
+		// Configured file excludes match the full relative path, so "*.min.js"
+		// finally has an effect.
+		for _, pattern := range excludeFileGlobs {
+			if matchGlob(pattern, rel) {
+				return nil
+			}
 		}
 
 		if matchGlob(fileGlob, rel) {
