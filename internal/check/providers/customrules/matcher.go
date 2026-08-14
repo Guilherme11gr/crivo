@@ -294,17 +294,13 @@ type semgrepResultJSON struct {
 	} `json:"extra"`
 }
 
-// semgrepAvailable caches the result of checking for semgrep binary
-var semgrepAvailable *bool
-
-// isSemgrepAvailable checks if semgrep is installed (uses auto-install cache)
+// isSemgrepAvailable checks if semgrep is usable, attempting auto-install the
+// same way the dedicated semgrep provider does (check.EnsureTool). The result
+// is NOT cached for the process lifetime: a negative answer must not stick, or
+// a later run with the tool installed would silently skip semgrep rules.
 func isSemgrepAvailable() bool {
-	if semgrepAvailable != nil {
-		return *semgrepAvailable
-	}
-	avail := check.FindTool("semgrep") != ""
-	semgrepAvailable = &avail
-	return avail
+	_, err := check.EnsureTool("semgrep")
+	return err == nil
 }
 
 // findSemgrepBin returns the semgrep binary path, trying auto-install if needed.
@@ -317,6 +313,24 @@ func findSemgrepBin() string {
 		return p
 	}
 	return "semgrep" // fallback to PATH lookup
+}
+
+// ruleIDList joins rule IDs for a human-readable detail message.
+func ruleIDList(rules []CompiledRule) string {
+	ids := make([]string, len(rules))
+	for i, r := range rules {
+		ids[i] = r.Raw.ID
+	}
+	return strings.Join(ids, ", ")
+}
+
+// truncateDetail bounds a subprocess stderr snippet to maxChars.
+func truncateDetail(s string, maxChars int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= maxChars {
+		return s
+	}
+	return s[:maxChars] + "..."
 }
 
 // hasAdvancedSemgrepOptions returns true if the rule uses pattern-not, pattern-inside, etc.
@@ -542,9 +556,17 @@ func buildSemgrepBatchConfig(rules []CompiledRule) (string, error) {
 // matchSemgrepBatch runs semgrep once with multiple rules batched into a single config file.
 // Rules are grouped by their file glob, and one semgrep invocation is made per glob group.
 // Results are mapped back to the correct rule by check_id.
-func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir string, exclude []string, scopedFiles []string) []domain.Issue {
-	if !isSemgrepAvailable() || len(rules) == 0 {
-		return nil
+//
+// It returns the issues found plus a list of human-readable details. A non-empty
+// details slice means semgrep rules were NOT actually scanned for that group:
+// either the binary is unavailable (rules skipped) or the subprocess failed —
+// the caller must surface this and never report a clean pass.
+func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir string, exclude []string, scopedFiles []string) ([]domain.Issue, []string) {
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	if !isSemgrepAvailable() {
+		return nil, []string{fmt.Sprintf("semgrep unavailable — %d rules skipped: %s", len(rules), ruleIDList(rules))}
 	}
 
 	// Build a lookup of rules by ID for mapping results back
@@ -564,13 +586,15 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 	}
 
 	var allIssues []domain.Issue
+	var details []string
 
 	for glob, groupRules := range globToRules {
 		files, err := filesForGlob(ctx, projectDir, glob, exclude, scopedFiles)
 		if err != nil {
 			if ctx.Err() != nil {
-				return allIssues
+				return allIssues, details
 			}
+			details = append(details, fmt.Sprintf("semgrep failed for rules %s: %s", ruleIDList(groupRules), truncateDetail(err.Error(), 200)))
 			continue
 		}
 		if len(files) == 0 {
@@ -580,6 +604,7 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 		// Build batch config for this glob group
 		configPath, err := buildSemgrepBatchConfig(groupRules)
 		if err != nil {
+			details = append(details, fmt.Sprintf("semgrep failed for rules %s: %s", ruleIDList(groupRules), truncateDetail(err.Error(), 200)))
 			continue
 		}
 
@@ -602,16 +627,24 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 
-		_ = cmd.Run()
+		runErr := cmd.Run()
 		os.Remove(configPath)
 
 		output := stdout.Bytes()
-		if len(output) == 0 {
+		if runErr != nil && len(output) == 0 {
+			// Subprocess failed without producing JSON: surface the error
+			// instead of silently treating the group as clean.
+			errMsg := strings.TrimSpace(stderr.String())
+			if errMsg == "" {
+				errMsg = runErr.Error()
+			}
+			details = append(details, fmt.Sprintf("semgrep failed for rules %s: %s", ruleIDList(groupRules), truncateDetail(errMsg, 200)))
 			continue
 		}
 
 		var result semgrepJSON
 		if err := json.Unmarshal(output, &result); err != nil {
+			details = append(details, fmt.Sprintf("semgrep failed for rules %s: invalid JSON output: %s", ruleIDList(groupRules), truncateDetail(err.Error(), 200)))
 			continue
 		}
 
@@ -643,10 +676,10 @@ func matchSemgrepBatch(ctx context.Context, rules []CompiledRule, projectDir str
 				Advisory:    rule.Advisory,
 				Source:      "custom-rules",
 				Effort:      "15min",
-				Remediation: domain.CustomRuleRemediation("advisory", rule.Raw.Message),
+				Remediation: domain.CustomRuleRemediation("semgrep", rule.Raw.Message),
 			})
 		}
 	}
 
-	return allIssues
+	return allIssues, details
 }

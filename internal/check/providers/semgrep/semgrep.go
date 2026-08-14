@@ -90,6 +90,19 @@ func (p *Provider) Analyze(ctx context.Context, projectDir string, cfg *config.C
 
 	targets := semgrepTargets(ctx, projectDir, cfg)
 	if len(targets) == 0 {
+		// A run with no scannable targets must never report a pass: with a
+		// --new-code scope active, 0 targets means the diff was empty or
+		// unresolvable, and "0 findings" would be a vacuous pass.
+		if _, ok := check.NewCodeScopeFromContext(ctx); ok {
+			return &domain.CheckResult{
+				Name:     p.Name(),
+				ID:       p.ID(),
+				Status:   domain.StatusError,
+				Summary:  "new-code scope active but 0 scannable targets",
+				Details:  []string{"No scannable files found in the new-code scope. Check the diff — an empty or unresolvable scope is an error, not a clean scan."},
+				Duration: time.Since(start),
+			}, nil
+		}
 		return &domain.CheckResult{
 			Name:     p.Name(),
 			ID:       p.ID(),

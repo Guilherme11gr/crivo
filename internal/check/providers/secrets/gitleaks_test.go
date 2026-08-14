@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/guilherme11gr/crivo/internal/check"
@@ -89,12 +90,12 @@ func TestMaskSecret(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"AKIAIOSFODNN7EXAMPLE", "AKIA****MPLE"},
-		{"pk_test_yyyyyyyyyyghij", "pk_t****ghij"},
-		{"short", "****"},
-		{"12345678", "****"},
-		{"123456789", "1234****6789"},
-		{"", "****"},
+		{"AKIAIOSFODNN7EXAMPLE", "****(1a5d44a2)"},
+		{"pk_test_yyyyyyyyyyghij", "****(bbe7a49a)"},
+		{"short", "****(f9b0078b)"},
+		{"12345678", "****(ef797c81)"},
+		{"123456789", "****(15e2b0d3)"},
+		{"", "****(e3b0c442)"},
 	}
 
 	for _, tt := range tests {
@@ -102,6 +103,36 @@ func TestMaskSecret(t *testing.T) {
 			got := maskSecret(tt.input)
 			if got != tt.want {
 				t.Errorf("maskSecret(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMaskSecret_NoSubstringLeak(t *testing.T) {
+	inputs := []string{
+		"AKIAIOSFODNN7EXAMPLE",
+		"pk_test_yyyyyyyyyyghij",
+		"ghp_1234567890abcdefGHIJKLMNOPQRSTUVWXYZ",
+		"a",
+		"",
+	}
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			masked := maskSecret(in)
+			// For inputs of 4+ chars the mask must not contain the full secret
+			// (for 1-char inputs the hex fingerprint alphabet can legitimately
+			// contain that char, so the check is not meaningful).
+			if len(in) >= 4 && strings.Contains(masked, in) {
+				t.Errorf("maskSecret(%q) = %q contains the full secret", in, masked)
+			}
+			// Neither the prefix nor the suffix of the secret may appear.
+			if len(in) >= 8 {
+				if strings.Contains(masked, in[:4]) {
+					t.Errorf("maskSecret(%q) = %q leaks the secret prefix %q", in, masked, in[:4])
+				}
+				if strings.Contains(masked, in[len(in)-4:]) {
+					t.Errorf("maskSecret(%q) = %q leaks the secret suffix %q", in, masked, in[len(in)-4:])
+				}
 			}
 		})
 	}
@@ -279,6 +310,110 @@ func TestGitleaksTargets_UsesChangedFilesScope(t *testing.T) {
 	}
 	if !strings.HasSuffix(filepath.ToSlash(targets[0]), "src/secret.ts") {
 		t.Fatalf("unexpected target %q", targets[0])
+	}
+}
+
+// ─── Fail-closed: empty scope never passes ───────────────────────────────────
+
+// gitleaksQuietStub installs a shared stub gitleaks binary (emits an empty
+// results array) and puts its directory at the front of PATH. The stub is
+// created once per package because check.FindTool caches positive lookups for
+// the process lifetime: per-test stubs would go stale after the test's temp
+// dir is cleaned.
+func gitleaksQuietStub(t *testing.T) string {
+	t.Helper()
+	gitleaksStubOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "crivo-gitleaks-stub-*")
+		if err != nil {
+			t.Fatalf("create stub dir: %v", err)
+		}
+		gitleaksStubDir = dir
+		bin := filepath.Join(dir, "gitleaks")
+		if runtime.GOOS == "windows" {
+			bin += ".exe"
+		}
+		script := "#!/bin/sh\necho \"$@\" >> \"" + filepath.ToSlash(filepath.Join(dir, "invocations.log")) + "\"\necho '[]'\n"
+		if runtime.GOOS == "windows" {
+			script = "@echo off\necho []\n"
+		}
+		if err := os.WriteFile(bin, []byte(script), 0755); err != nil {
+			t.Fatalf("write stub: %v", err)
+		}
+	})
+	t.Setenv("PATH", gitleaksStubDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return filepath.Join(gitleaksStubDir, "gitleaks")
+}
+
+var (
+	gitleaksStubOnce sync.Once
+	gitleaksStubDir  string
+)
+
+func TestAnalyze_ActiveScopeZeroTargets_StatusError(t *testing.T) {
+	projectDir := t.TempDir()
+	gitleaksQuietStub(t)
+
+	// Scope references only files that do not exist on disk → 0 scannable targets.
+	ctx := check.WithNewCodeScope(context.Background(), check.NewScope(
+		[]gitutil.ChangedFile{{Path: "src/secret.ts"}},
+		nil,
+	))
+
+	p := New()
+	result, err := p.Analyze(ctx, projectDir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != domain.StatusError {
+		t.Fatalf("expected StatusError for active scope with 0 targets, got %s (summary %q)", result.Status, result.Summary)
+	}
+	if !strings.Contains(result.Summary, "0 scannable targets") {
+		t.Errorf("expected summary to mention 0 scannable targets, got %q", result.Summary)
+	}
+	if len(result.Details) == 0 {
+		t.Error("expected a detail instructing to check the diff")
+	}
+}
+
+func TestAnalyze_ActiveScopeWithTargets_RunsScan(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(projectDir, "src"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectDir, "src", "app.ts"), []byte("const x = 1"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	gitleaksQuietStub(t)
+
+	ctx := check.WithNewCodeScope(context.Background(), check.NewScope(
+		[]gitutil.ChangedFile{{Path: "src/app.ts"}},
+		nil,
+	))
+
+	p := New()
+	result, err := p.Analyze(ctx, projectDir, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// The stub emitted [] — a real scan ran and found nothing, which is a
+	// legitimate pass (unlike the vacuous 0-target pass).
+	if result.Status != domain.StatusPassed {
+		t.Fatalf("expected passed after a real (stubbed) scan with no findings, got %s (summary %q)", result.Status, result.Summary)
+	}
+	invocations, err := os.ReadFile(filepath.Join(gitleaksStubDir, "invocations.log"))
+	if err != nil {
+		t.Fatalf("expected the stub to be invoked: %v", err)
+	}
+	if len(invocations) == 0 {
+		t.Error("expected at least one gitleaks invocation for a scope with targets")
+	}
+}
+
+func TestGitleaksTargets_NoScope_ReturnsProjectDir(t *testing.T) {
+	projectDir := t.TempDir()
+	targets := gitleaksTargets(context.Background(), projectDir)
+	if len(targets) != 1 || targets[0] != projectDir {
+		t.Fatalf("expected [projectDir] without scope, got %#v", targets)
 	}
 }
 
