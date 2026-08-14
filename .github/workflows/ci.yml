@@ -17,7 +17,7 @@ jobs:
 
       - run: go vet ./...
 
-      - run: go test ./internal/... -count=1 -race
+      - run: go test ./... -count=1 -race
 
   build:
     runs-on: ubuntu-latest
