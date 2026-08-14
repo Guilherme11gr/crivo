@@ -106,6 +106,12 @@ func EnsureTool(name string) (string, error) {
 		return p, nil
 	}
 
+	// CRIVO_NO_AUTO_INSTALL=1 opts out of downloading/executing third-party
+	// code: report the tool as unavailable instead of installing it.
+	if os.Getenv("CRIVO_NO_AUTO_INSTALL") == "1" {
+		return "", fmt.Errorf("auto-install disabled (CRIVO_NO_AUTO_INSTALL=1): %s not found", name)
+	}
+
 	// Try to auto-install
 	installer, ok := toolInstallers[name]
 	if !ok {
