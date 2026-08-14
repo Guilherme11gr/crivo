@@ -90,12 +90,12 @@ func TestMaskSecret(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"AKIAIOSFODNN7EXAMPLE", "AKIA****MPLE"},
-		{"pk_test_yyyyyyyyyyghij", "pk_t****ghij"},
-		{"short", "****"},
-		{"12345678", "****"},
-		{"123456789", "1234****6789"},
-		{"", "****"},
+		{"AKIAIOSFODNN7EXAMPLE", "****(1a5d44a2)"},
+		{"pk_test_yyyyyyyyyyghij", "****(bbe7a49a)"},
+		{"short", "****(f9b0078b)"},
+		{"12345678", "****(ef797c81)"},
+		{"123456789", "****(15e2b0d3)"},
+		{"", "****(e3b0c442)"},
 	}
 
 	for _, tt := range tests {
@@ -103,6 +103,36 @@ func TestMaskSecret(t *testing.T) {
 			got := maskSecret(tt.input)
 			if got != tt.want {
 				t.Errorf("maskSecret(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMaskSecret_NoSubstringLeak(t *testing.T) {
+	inputs := []string{
+		"AKIAIOSFODNN7EXAMPLE",
+		"pk_test_yyyyyyyyyyghij",
+		"ghp_1234567890abcdefGHIJKLMNOPQRSTUVWXYZ",
+		"a",
+		"",
+	}
+	for _, in := range inputs {
+		t.Run(in, func(t *testing.T) {
+			masked := maskSecret(in)
+			// For inputs of 4+ chars the mask must not contain the full secret
+			// (for 1-char inputs the hex fingerprint alphabet can legitimately
+			// contain that char, so the check is not meaningful).
+			if len(in) >= 4 && strings.Contains(masked, in) {
+				t.Errorf("maskSecret(%q) = %q contains the full secret", in, masked)
+			}
+			// Neither the prefix nor the suffix of the secret may appear.
+			if len(in) >= 8 {
+				if strings.Contains(masked, in[:4]) {
+					t.Errorf("maskSecret(%q) = %q leaks the secret prefix %q", in, masked, in[:4])
+				}
+				if strings.Contains(masked, in[len(in)-4:]) {
+					t.Errorf("maskSecret(%q) = %q leaks the secret suffix %q", in, masked, in[len(in)-4:])
+				}
 			}
 		})
 	}

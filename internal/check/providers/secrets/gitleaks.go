@@ -3,6 +3,7 @@ package secrets
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -298,11 +299,12 @@ func normalizeGitleaksResults(projectDir string, results []gitleaksResult) []git
 	return results
 }
 
+// maskSecret renders a redacted placeholder that never contains a substring of
+// the secret itself (the previous mask leaked 4+4 chars). It is a fixed marker
+// plus the first 8 hex chars of the SHA-256 fingerprint, which is stable enough
+// to correlate findings without exposing the value.
 func maskSecret(s string) string {
-	if len(s) <= 8 {
-		return "****"
-	}
-	return s[:4] + "****" + s[len(s)-4:]
+	return "****(" + fmt.Sprintf("%x", sha256.Sum256([]byte(s)))[:8] + ")"
 }
 
 // isTestOrMockFile checks if a file path looks like a test, mock, or fixture file.
