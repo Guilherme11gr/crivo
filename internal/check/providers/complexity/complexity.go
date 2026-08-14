@@ -109,50 +109,97 @@ func (p *Provider) analyzeAST(ctx context.Context, projectDir string, cfg *confi
 		return nil, err
 	}
 
-	// Determine source directory
-	srcDir := "src/"
-	if len(cfg.Src) > 0 {
-		srcDir = cfg.Src[0]
+	// Collect every configured src dir that exists on disk and run one
+	// cognitive.js invocation per dir; results are aggregated below.
+	srcDirs := cfg.Src
+	if len(srcDirs) == 0 {
+		srcDirs = []string{"src/"}
 	}
-	dir := filepath.Join(projectDir, srcDir)
-
-	args := []string{scriptPath, dir, fmt.Sprintf("--threshold=%d", threshold)}
-	if len(cfg.Exclude) > 0 {
-		args = append(args, "--exclude="+strings.Join(cfg.Exclude, ","))
+	var dirs []string
+	for _, srcDir := range srcDirs {
+		dir := filepath.Join(projectDir, srcDir)
+		if _, err := os.Stat(dir); err == nil {
+			dirs = append(dirs, dir)
+		}
 	}
-
-	cmd := exec.CommandContext(ctx, nodeBin, args...)
-	cmd.Dir = projectDir
-	// Ensure typescript is resolvable
-	cmd.Env = append(os.Environ(), "NODE_PATH="+filepath.Join(projectDir, "node_modules"))
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("node: %s (stderr: %s)", err, stderr.String())
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("no source directories found")
 	}
 
-	var output astOutput
-	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
-		return nil, fmt.Errorf("parse ast output: %w", err)
-	}
-	if output.Error != "" {
-		return nil, fmt.Errorf("cognitive.js: %s", output.Error)
+	var (
+		allFunctions []astFunction
+		allSummary   astSummary
+	)
+	for _, dir := range dirs {
+		args := []string{scriptPath, dir, fmt.Sprintf("--threshold=%d", threshold)}
+		if len(cfg.Exclude) > 0 {
+			args = append(args, "--exclude="+strings.Join(cfg.Exclude, ","))
+		}
+
+		cmd := exec.CommandContext(ctx, nodeBin, args...)
+		cmd.Dir = projectDir
+		// Ensure typescript is resolvable
+		cmd.Env = append(os.Environ(), "NODE_PATH="+filepath.Join(projectDir, "node_modules"))
+
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+
+		if err := cmd.Run(); err != nil {
+			return nil, fmt.Errorf("node: %s (stderr: %s)", err, stderr.String())
+		}
+
+		var output astOutput
+		if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+			return nil, fmt.Errorf("parse ast output: %w", err)
+		}
+		if output.Error != "" {
+			return nil, fmt.Errorf("cognitive.js: %s", output.Error)
+		}
+
+		// Fix paths: cognitive.js outputs paths relative to the scanned
+		// directory, but we need them relative to projectDir (i.e., prefixed
+		// with the src dir).
+		srcPrefix := filepath.ToSlash(srcDirFor(projectDir, dir))
+		if !strings.HasSuffix(srcPrefix, "/") {
+			srcPrefix += "/"
+		}
+		for i := range output.Functions {
+			output.Functions[i].File = srcPrefix + output.Functions[i].File
+		}
+
+		allFunctions = append(allFunctions, output.Functions...)
+		allSummary.TotalFunctions += output.Summary.TotalFunctions
+		allSummary.TotalLines += output.Summary.TotalLines
+		allSummary.Violations += output.Summary.Violations
+		if output.Summary.MaxComplexity > allSummary.MaxComplexity {
+			allSummary.MaxComplexity = output.Summary.MaxComplexity
+		}
+		allSummary.AvgComplexity += output.Summary.AvgComplexity
 	}
 
-	// Fix paths: cognitive.js outputs paths relative to the scanned directory,
-	// but we need them relative to projectDir (i.e., prefixed with srcDir).
-	srcPrefix := filepath.ToSlash(srcDir)
-	if !strings.HasSuffix(srcPrefix, "/") {
-		srcPrefix += "/"
-	}
-	for i := range output.Functions {
-		output.Functions[i].File = srcPrefix + output.Functions[i].File
+	// AvgComplexity is the mean of per-dir averages. This is only an
+	// approximation of the true average across the aggregated functions (the
+	// exact value would need per-function complexities), but it keeps the
+	// metric meaningful for multi-src projects without a second pass.
+	if len(dirs) > 0 {
+		allSummary.AvgComplexity /= float64(len(dirs))
 	}
 
-	return p.buildResult(output, threshold, "ast"), nil
+	return p.buildResult(astOutput{
+		Functions: allFunctions,
+		Summary:   allSummary,
+	}, threshold, "ast"), nil
+}
+
+// srcDirFor maps an absolute scanned dir back to the configured src value
+// (with trailing slash) for path prefixing.
+func srcDirFor(projectDir, dir string) string {
+	rel, err := filepath.Rel(projectDir, dir)
+	if err != nil {
+		return "src/"
+	}
+	return filepath.ToSlash(rel)
 }
 
 func (p *Provider) buildResult(output astOutput, threshold int, method string) *domain.CheckResult {

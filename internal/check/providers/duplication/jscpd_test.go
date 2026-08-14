@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/guilherme11gr/crivo/internal/config"
@@ -190,6 +191,129 @@ func TestDetect(t *testing.T) {
 	}
 }
 
+func TestAnalyze_MultiSrcScansAllDirs(t *testing.T) {
+	// Two configured src dirs (a/, b/), with a clone crossing both. jscpd is
+	// stubbed to emit a report whose findings reference both dirs, and the
+	// captured argv must list both dirs as positional arguments.
+	stubNpx(t, `echo "ARGS:$*" > args.txt
+mkdir -p .qualitygate-temp
+cat > .qualitygate-temp/jscpd-report.json <<'EOF'
+{
+  "statistics": {"total": {"percentage": 10.0, "lines": 100, "sources": 4, "clones": 1}},
+  "duplicates": [
+    {
+      "firstFile": {"name": "a/util.ts", "start": 1, "end": 10, "startLoc": {"line": 1, "column": 1}, "endLoc": {"line": 10, "column": 1}},
+      "secondFile": {"name": "b/helper.ts", "start": 1, "end": 10, "startLoc": {"line": 1, "column": 1}, "endLoc": {"line": 10, "column": 1}},
+      "lines": 10, "tokens": 30, "fragment": "dup"
+    },
+    {
+      "firstFile": {"name": "a/other.ts", "start": 1, "end": 10, "startLoc": {"line": 1, "column": 1}, "endLoc": {"line": 10, "column": 1}},
+      "secondFile": {"name": "b/more.ts", "start": 1, "end": 10, "startLoc": {"line": 1, "column": 1}, "endLoc": {"line": 10, "column": 1}},
+      "lines": 10, "tokens": 30, "fragment": "dup"
+    }
+  ]
+}
+EOF
+`)
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "a"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "b"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Create the files the report references, so path resolution can verify
+	// them on disk.
+	for _, f := range []string{"a/util.ts", "a/other.ts", "b/helper.ts", "b/more.ts"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("export const x = 1;\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Src = []string{"a/", "b/"}
+	// Keep the test deterministic: only jscpd findings, no semantic clones
+	// (the fixture files are identical tiny files that would be flagged).
+	cfg.Duplication.Semantic = false
+
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if result.Status != domain.StatusFailed {
+		t.Fatalf("status = %s, want failed (10%% > 5%% threshold)", result.Status)
+	}
+	if len(result.Issues) != 2 {
+		t.Fatalf("expected 2 issues, got %d", len(result.Issues))
+	}
+	// Issue file must be project-relative with the src prefix preserved.
+	// jscpd issues point at the first file of each pair.
+	files := map[string]bool{}
+	for _, is := range result.Issues {
+		files[is.File] = true
+	}
+	if !files["a/util.ts"] {
+		t.Errorf("issues %v missing a/util.ts (src prefix must be preserved)", result.Issues)
+	}
+	if !files["a/other.ts"] {
+		t.Errorf("issues %v missing a/other.ts (second pair must keep its src prefix)", result.Issues)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "args.txt"))
+	if err != nil {
+		t.Fatalf("stub did not capture argv: %v", err)
+	}
+	captured := string(data)
+	if !strings.Contains(captured, "jscpd") {
+		t.Errorf("captured argv %q missing jscpd", captured)
+	}
+	// Both src dirs must be passed as positional arguments (absolute paths).
+	for _, src := range []string{"a", "b"} {
+		if !strings.Contains(captured, filepath.Join(dir, src)) {
+			t.Errorf("captured argv %q does not contain src dir %q (both src dirs must be passed)", captured, filepath.Join(dir, src))
+		}
+	}
+}
+
+func TestAnalyze_MultiSrcSkipsOnlyWhenNoneExist(t *testing.T) {
+	// One configured src dir missing, another present: analysis must still run.
+	stubNpx(t, `echo "ARGS:$*" > args.txt
+mkdir -p .qualitygate-temp
+echo '{"statistics":{"total":{"percentage":0,"lines":0,"sources":1,"clones":0}},"duplicates":[]}' > .qualitygate-temp/jscpd-report.json
+`)
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "b"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	p := New()
+	cfg := config.DefaultConfig()
+	cfg.Src = []string{"missing/", "b/"}
+
+	result, err := p.Analyze(context.Background(), dir, cfg)
+	if err != nil {
+		t.Fatalf("Analyze() error = %v", err)
+	}
+	if result.Status != domain.StatusPassed {
+		t.Fatalf("status = %s, want passed (missing dir ignored, b/ scanned)", result.Status)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, "args.txt"))
+	if err != nil {
+		t.Fatalf("stub did not capture argv: %v", err)
+	}
+	captured := string(data)
+	if strings.Contains(captured, "missing/") {
+		t.Errorf("captured argv %q must not contain the missing dir", captured)
+	}
+	if !strings.Contains(captured, filepath.Join(dir, "b")) {
+		t.Errorf("captured argv %q must contain the existing dir", captured)
+	}
+}
+
 func TestAnalyze_SourceDirNotFound(t *testing.T) {
 	p := New()
 	dir := t.TempDir()
@@ -266,6 +390,47 @@ func TestIssueConstruction(t *testing.T) {
 	}
 	if issue.Line != 10 {
 		t.Errorf("expected line 10, got %d", issue.Line)
+	}
+}
+
+func TestNormalizeReportPath(t *testing.T) {
+	dir := t.TempDir()
+	// Two src dirs like a real multi-src project.
+	for _, f := range []string{"a/util.ts", "b/helper.ts"} {
+		p := filepath.Join(dir, f)
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("export const x = 1;\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srcPaths := []string{
+		filepath.Join(dir, "a"),
+		filepath.Join(dir, "b"),
+	}
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{"empty", "", ""},
+		// jscpd reports relative to project dir — resolved directly.
+		{"project-relative", "a/util.ts", "a/util.ts"},
+		// Some jscpd versions report relative to the scanned dir, dropping
+		// the src prefix — must be resolved back to the project-relative path.
+		{"scanned-dir-relative", "util.ts", "a/util.ts"},
+		{"scanned-dir-relative-other", "helper.ts", "b/helper.ts"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeReportPath(dir, srcPaths, tt.path)
+			if filepath.ToSlash(got) != tt.want {
+				t.Errorf("normalizeReportPath(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
 	}
 }
 
